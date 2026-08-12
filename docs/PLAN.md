@@ -35,13 +35,13 @@ No phase begins before the previous gate passes.
 **Goal:** compile Samsung's source and boot it with all hardware working, changing only the
 minimum required to make a *self-built* kernel boot on **this** device.
 
-> **Device reality (owner-confirmed) — protections come in here, not Phase 3.** On this
-> unlocked, custom-ROM (BeyondROM) device, a raw *unmodified* self-built kernel will **not**
-> boot: the ROM's working kernel already has Samsung's integrity/modification detectors
-> disabled, so re-enabling them (as a from-stock-source build does by default) trips
-> uH/RKP/KDP and the integrity checks → bootloop. Therefore **disabling the Samsung
-> boot-blocking protections is part of "the minimum to boot"** and lives in Phase 1, *before*
-> any KernelSU/SUSFS work. (Phase 3 keeps only the module-loading/LKM-specific pieces.)
+> **Device reality (owner-confirmed, verified against `/proc/config.gz`) — protections come in
+> here, not Phase 3.** BeyondROM runs the **stock, unmodified kernel** (its live config has all
+> six protections still `=y`), and boots because uH/RKP/KDP are satisfied by the unmodified
+> kernel they guard — only PROCA is byte-patched, and Magisk supplies root. But *we* flash a
+> **self-built (modified) kernel**, which uH/RKP/KDP detect as tampered → bootloop. So
+> **disabling the Samsung boot-blocking protections is part of "the minimum to boot"** for us and
+> lives in Phase 1, *before* any KernelSU/SUSFS. (Phase 3 keeps only the LKM-specific pieces.)
 
 - [x] Import the archive to `vanilla`; tag `osrc/<build-string>` (done: `osrc/S928BXXU5DZDP`)
 - [x] `scripts/setup-toolchain.sh` — fetch the reference Clang + prebuilts (green in CI)
