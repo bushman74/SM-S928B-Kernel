@@ -82,8 +82,17 @@ Note: **SEANDROIDENFORCE and vbmeta/AVB are not in this list.** They are not ker
 — see the packaging rules in the skill — and correctly live as post-build steps regardless of
 source access.
 
-### One change per commit
-No omnibus commits. Every commit must be independently revertible and bisectable.
+### One change per commit — quantise as finely as possible
+No omnibus commits. Every commit is the **smallest self-contained unit** that still makes
+sense on its own — split whenever you can, not merely when you must. When two changes could
+each be reverted, described, or reviewed independently, they are two commits. One protection
+neutralized, one `CONFIG_` symbol, one script, one bugfix, one doc section — each is its own
+commit. Never bundle a fix with a refactor, or an unrelated cleanup with a feature.
+
+Why this matters here specifically: later phases depend on being able to **bisect** a boot
+failure to one change, and to **revert one decision surgically** without unpicking others. A
+coarse commit that mixes three things forces an all-or-nothing revert and hides which line
+caused a regression. Finer is always safer; err on the side of more, smaller commits.
 
 ---
 
@@ -139,6 +148,25 @@ Verified: <not-flashed | boots | boots+all-hw | regressed:...>
 
 The `Verified:` trailer is filled in by the human after flashing. If you write a commit, set
 it to `not-flashed`.
+
+### Commit and PR descriptions are exhaustive by default
+
+Write commit bodies and PR descriptions to be **maximally detailed** — assume a future reader
+(or a fresh Claude session with no chat history) must fully understand the change from the text
+alone. A good commit body covers, as applicable:
+
+- **What** changed, concretely (files, functions, `CONFIG_` symbols).
+- **Why** — the problem it solves, from the reader's vantage point.
+- **Evidence** — exact `file:line` citations, grep results, or the CI run/step and the error
+  text that motivated it. Quote the failing line.
+- **What was ruled out** and why (alternatives considered, approaches rejected).
+- **How it was (or must be) verified** — the literal command or the flash-and-check step.
+- **Blast radius** — what else this could affect (ABI, boot, a firmware-coupled subsystem).
+
+PR descriptions do the same at the change-set level: enumerate each commit and its purpose, the
+overall intent, the verification state, and any follow-ups. Prefer over-documenting; nobody has
+ever been harmed by a commit message that was too thorough. (Still: never reference the
+assistant or a session link — see above.)
 
 ---
 
