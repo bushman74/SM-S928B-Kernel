@@ -115,6 +115,16 @@ jobs:
           echo "USE_CCACHE=1" >> "$GITHUB_ENV"
           echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
 
+      # The prebuilts (clang + host tools) are ~6 GB fetched from googlesource. Cache
+      # them keyed on the fetch script so a normal run reuses them; setup-toolchain.sh is
+      # idempotent, so on a cache hit it just verifies and returns.
+      - name: Restore prebuilts
+        if: ${{ inputs.clean == false }}
+        uses: actions/cache@v4
+        with:
+          path: kernel_platform/prebuilts
+          key: prebuilts-${{ inputs.toolchain }}-${{ hashFiles('scripts/setup-toolchain.sh') }}
+
       - name: Fetch toolchain
         run: ./scripts/setup-toolchain.sh "${{ inputs.toolchain }}"
 
