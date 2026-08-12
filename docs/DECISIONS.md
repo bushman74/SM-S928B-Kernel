@@ -253,12 +253,16 @@ alongside KernelSU), based on the owner's knowledge of their device.
 kernel" — and happens **before** any KernelSU Next / SUSFS work, even for a plain no-root test
 build.
 
-**Why:** the device runs an unlocked bootloader + custom ROM (BeyondROM). Its working kernel
-already has these detectors disabled; a build from *raw* Samsung source re-enables them by
-default, and on a modified/rooted system they trip at boot (uH/RKP integrity enforcement,
-DEFEX/PROCA/FIVE integrity checks) → bootloop. Owner-confirmed: a raw-unmodified self-built
-kernel simply will not boot here. So there is no useful "unmodified boots" baseline to test; the
-first flashable build already has these off.
+**Why (precise mechanism, confirmed by the device's `/proc/config.gz`):** BeyondROM runs the
+**stock, unmodified kernel** — its live config shows all six protections still `=y` (kernel
+6.1.145, clang r487747c, `CONFIG_LTO_NONE=y`), i.e. BeyondROM disabled *none* of them in the
+kernel. It boots anyway because uH/RKP/KDP are satisfied by the *unmodified* kernel they guard;
+the only Samsung block on a modified *system* (not the kernel), PROCA, is neutralized by a
+post-build byte-patch (the source-blind method), and Magisk supplies root. **Our case differs:**
+we flash a *self-built, modified* kernel — uH/RKP/KDP will see it as tampered and bootloop. So we
+must disable uH/RKP/KDP (which BeyondROM never had to, keeping the stock kernel) as well as
+DEFEX/PROCA/FIVE. Owner-confirmed a raw self-built kernel won't boot here; there is no useful
+"unmodified boots" baseline, so the first flashable build already has these off.
 
 **How:** each protection is its own commit (bisectability), at the defconfig level where
 possible (`FACTS §0.4` shows none are force-selected, so defconfig off-switches suffice as the
