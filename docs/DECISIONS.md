@@ -171,3 +171,39 @@ neutralized protections. §0.5 evidence is favourable to LKM: `KPROBES=y`, signi
 
 **Would change our mind:** the LKM refuses to load on our built kernel (vermagic/KMI or
 `MODULE_SIG_PROTECT`) → switch to KSU Next built-in integration; record it here.
+
+---
+
+## 2026-08-12 — Clarification: we did NOT switch compilers, and nothing became "less Samsung"
+
+**Recorded to prevent a recurring misunderstanding, not because a choice changed.**
+
+There is a natural assumption that "fetching clang from Google (android.googlesource.com)" means
+we *swapped* Samsung's compiler for Google's, e.g. to chase performance. That is not what
+happened, and it is worth stating plainly:
+
+- **It is the same compiler Samsung uses.** Samsung's own build config names the exact toolchain:
+  `CLANG_VERSION=r487747c` (`kernel_platform/common/build.config.constants:2`). Samsung does not
+  ship a compiler of their own — their build downloads AOSP's clang prebuilt, the same one we
+  fetch. The OSRC drop simply omits `prebuilts/` (it says so in `README_Kernel.txt`: "get the
+  toolchain … decompress in `kernel_platform/prebuilts`"), so `scripts/setup-toolchain.sh` fetches
+  clang `r487747c` — the version Samsung specifies — from the android14-6.1 manifest. No newer or
+  different compiler is substituted.
+- **No performance/battery change results from this**, because there is no compiler change. Same
+  clang, same version, same flags Samsung's config sets. The build is maximally Samsung-faithful.
+- **The kernel was already GKI.** Samsung's S24 kernel is GKI 2.0 (KMI `android14-6.1`) by design;
+  we did not "turn it into GKI." Nothing we have done makes it less Samsung-intended — as of this
+  writing we have neutralized zero Samsung protections (that is Phase 3).
+
+**Why the reference compiler is pinned (not upgraded):** the stock `.ko` modules we do not rebuild
+must keep loading against our kernel; compiler/LTO/CFI are ABI-relevant, so a *different* clang
+risks breaking module loading. That is the whole point of the 2026-08-11 "reference Clang first"
+decision.
+
+**Would change our mind (path to real compiler-based optimization, if desired later):** §0.3 now
+confirms **all 351 device modules build from source**, which relaxes the ABI constraint the pin
+protects. So a *deliberate, isolated, revertible* experiment with a newer clang and/or LTO tuning
+(thin→full) for performance/battery becomes reasonable **after** a known-good stock baseline boots
+and is verified. It would be its own phase with before/after measurements, not a silent swap.
+(AutoFDO, the other compiler-driven optimization, was already evaluated and dropped — see
+2026-08-11.)
