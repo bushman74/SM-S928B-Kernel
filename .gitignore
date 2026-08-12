@@ -1,21 +1,28 @@
-# Build output and fetched toolchains (Phase 1+). These are large and reproducible.
+# --- Our build outputs and fetched toolchains (never committed) ---
 /out/
 /toolchain/
 /scratch/
-*.log
+/build.log
 
-# Never commit binaries, firmware, or kernel modules (see CLAUDE.md).
+# Samsung's OSRC drop ships a ~131 MB host GCC prebuilt and build-machine bazel
+# symlinks; neither belongs in git (CLAUDE.md: never commit toolchains). The GKI
+# build fetches clang via scripts/setup-toolchain.sh.
+/kernel_platform/gcc/
+/kernel_platform/bazel-bin
+/kernel_platform/bazel-out
+/kernel_platform/bazel-testlogs
+/kernel_platform/bazel-kernel_platform
+
+# Binary/firmware artifacts that must never be committed (CLAUDE.md).
+# These extensions do NOT occur in the Samsung source tree, so the vanilla
+# import stays faithful. (The tree's *.tar/*.zip/*.gz are bazel rules_pkg test
+# fixtures and are deliberately kept — hence no blanket patterns for those.)
+*.ko
 *.img
 *.img.lz4
-*.ko
-*.tar
-*.tar.gz
 *.tar.md5
 *.tgz
-*.gz
-*.lz4
 *.zst
-*.zip
 
 # Editor / OS cruft
 *.swp

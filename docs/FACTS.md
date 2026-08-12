@@ -103,7 +103,7 @@ Evidence convention: paths below are relative to the extracted kernel root
 (The top-level `build_kernel_GKI.sh` is a thin wrapper around the same flow; its
 `KBUILD_EXT_MODULES` list is `display-drivers/msm camera-kernel audio-kernel dsp-kernel`.)
 
-## 0.3 Module inventory *(blocking — PARTIAL: needs device `modules.load`)*
+## 0.3 Module inventory *(blocking — resolved)*
 
 **Source-side buildable surface (read from the tree):**
 
@@ -119,25 +119,31 @@ Evidence convention: paths below are relative to the extracted kernel root
   mmrm-driver, pal, power, recovery-ext, securemsm-kernel, softap, spu-kernel, synx-kernel, thermal-engine,
   thermal-hal, time-services, tools, touch-drivers, usb, vibrator, video-driver, wfd, wigig, wlan`.
 
-**Interim conclusion:** the great majority of drivers (Wi-Fi, BT, audio, camera, display, touch, video, DSP,
-sensors, fingerprint, battery) appear buildable from source. The authoritative "buildable vs must-reuse-stock"
-split, load order, and any `.ko` present on the device with **no** matching source can only be settled against
-the device's actual `modules.load`.
+**Device-side (from `/vendor/lib/modules/` on BeyondROM 5.0 DZDP, owner-supplied):** **351** distinct
+`.ko`; `modules.load` lists 472 lines (351 distinct — the ROM repeats the audio/wlan blocks in its load
+order, which is harmless).
 
-> **OWNER ACTION (device, needed to finish this table):** on the phone (root shell), run and paste back:
-> ```
-> ls -1 /vendor/lib/modules/
-> cat /vendor/lib/modules/modules.load
-> cat /vendor/lib/modules/modules.blocklist 2>/dev/null
-> ```
-> (If you also have `/vendor_dlkm/lib/modules/`, list that too.) I'll cross-reference each `.ko` against the
-> source above and fill the table below.
+**Cross-reference result: 351 of 351 device modules are buildable from this source — zero stock-only
+modules.** Method: every device `.ko` basename was matched against the tree's `*.c` stems, `Kbuild`/`Makefile`
+object tokens (`+= x.o`, `x-objs`, `x-y`), and `lego.bzl`. 350 matched directly; the single non-match,
+`qca_cld3_kiwi_v2.ko` (Wi-Fi), was confirmed by hand — it is built from
+`vendor/qcom/opensource/wlan/qcacld-3.0/` with `MODNAME=qca_cld3_kiwi_v2`, and the tree ships
+`qcacld-3.0/configs/pineapple_gki_kiwi-v2_defconfig` for exactly this target.
 
-| Module (.ko) | Source in archive? | Action |
-|---|---|---|
-| `TBD — pending device modules.load` | | |
+| Module group (examples) | Count | Source in archive? | Action |
+|---|---|---|---|
+| Samsung device drivers (`sec_*`, battery `max777xx`/`sec-battery`, `fingerprint`/`qfs4008`, sensors, `sec_input`/`stm_ts_spi`/`synaptics`, `wez02` wacom, `nfc_nxp_sec`, `kperfmon`, muic/`pdic`) | ~90 | **Yes** — `msm-kernel/drivers/*` + `lego.bzl` (64 named) | Build from source |
+| Qualcomm audio DLKM (`q6_*`, `lpass_cdc_*`, `wcd93xx`, `swr_*`, `machine_dlkm`, `snd-soc-*`) | ~55 | **Yes** — `vendor/qcom/opensource/audio-kernel`, `dsp-kernel` | Build from source |
+| Qualcomm connectivity/WLAN/BT (`cnss2`, `qca_cld3_kiwi_v2`, `cfg80211`, `mac80211`, `btpower`, `bt_fm_slim`) | ~15 | **Yes** — `wlan/qcacld-3.0`, `bt-kernel` | Build from source |
+| Qualcomm data path (`rmnet_*`, `ipa*`, `datarmnet*`) | ~15 | **Yes** — `dataipa`, `datarmnet(+ext)` | Build from source |
+| Firmware-coupled (see CLAUDE.md — **build unmodified**): `msm_kgsl`, `msm_drm`, `camera`, `msm_video`, `msm-eva`, `frpc-adsprpc`, `q6_*`/adsp, modem via `rmnet`/`cnss` | ~40 | **Yes** — `graphics-kernel`, `display-drivers`, `camera-kernel`, `video-driver`, `eva-kernel`, `dsp-kernel` | Build from source, **do not modify** |
+| Qualcomm platform/SoC (coresight, clocks `*cc-*`, thermal, regulators, glink/rpmsg, `qcom_q6v5*`, geni i2c/spi, usb) | ~135 | **Yes** — `msm-kernel/drivers/*` in-tree (`=m`) | Build from source |
+| **Total distinct** | **351** | **351 buildable** | **0 must-reuse-stock** |
 
-Summary: `TBD` of `TBD` modules buildable from source; remainder copied through from stock.
+Summary: **351 of 351** modules buildable from source; **none** must be copied through from stock. (We may
+still *choose* to reuse selected stock `.ko` to minimize ABI risk during Phase 1 bring-up, but source exists
+for all of them — the module pipeline is not blocked by any missing source.) Full authoritative load order is
+the device's own `modules.load` (owner-supplied, archived with this discovery).
 
 ## 0.4 Samsung security stack *(blocking — resolved from source)*
 
@@ -174,7 +180,29 @@ build).
 | `CONFIG_KPROBES` / `HAVE_KPROBES` / `KPROBE_EVENTS` | **`KPROBES=y`** already (`common/gki_defconfig:96`). `HAVE_KPROBES` is arch-selected (`common/arch/arm64/Kconfig:213 select HAVE_KPROBES`). `KPROBE_EVENTS` not in defconfig (tracing-only, not required for KSU LKM hooks). ✅ **No kprobes-enablement patch needed** — the LKM's hooking prerequisite is satisfied out of the box. *(blocking — resolved)* |
 | `CONFIG_WERROR` | Not found in `gki_defconfig` (may be applied via build flag). Non-blocking. |
 
-## 0.6 Boot images, ramdisk & verified boot *(blocking — source parts resolved; device parts pending)*
+### Build prerequisites the OSRC drop does NOT ship (Phase 1 blocker to solve)
+
+The Samsung drop contains **no `kernel_platform/prebuilts/` directory**, but the Kleaf build loads its
+toolchain and host tools from bazel packages under `//prebuilts/…`. So the source is **not self-contained**;
+CI must reconstruct the android14-6.1 kernel `prebuilts/` set before it can build. Referenced projects (from
+`grep -oE '//prebuilts/…'` over `build/` and `msm-kernel/`):
+
+| Bazel path | Purpose | Refs |
+|---|---|---|
+| `//prebuilts/clang/host/linux-x86` | Clang `r487747c` **+ the `kleaf/` registration** (`register.bzl`, `versions.bzl`) that `build/kernel/kleaf/workspace.bzl:27` loads | 9 |
+| `//prebuilts/kernel-build-tools` | mkbootimg/avbtool/lz4/etc. host tools | 15 |
+| `//prebuilts/build-tools` | general host build tools + `py_toolchain` | 10 |
+| `//prebuilts/clang-tools` | `bindgen` (`kernel_env.bzl:457`) | 1 |
+| `//prebuilts/rust/linux-x86` | Rust toolchain | 1 |
+| `//prebuilts/bazel`, `//prebuilts/jdk/jdk11/linux-x86` | bazel `remote_java_tools`, JDK11 (`workspace.bzl:120-135`) | — |
+
+**Ground truth for exact projects + pinned revisions = the AOSP kernel manifest for `android14-6.1`**
+(`android.googlesource.com/kernel/manifest`, branch `android14-6.1`) — *not* to be guessed per-path. `README_Kernel.txt`
+points the same way ("get the toolchain … decompress in `kernel_platform/prebuilts`"). **Consequence:**
+`scripts/setup-toolchain.sh` must fetch this whole prebuilts set into `kernel_platform/prebuilts/`, not just a
+single clang tarball. This is the main open task before CI can produce a `boot.img`.
+
+## 0.6 Boot images, ramdisk & verified boot *(blocking — resolved)*
 
 | Field | Value |
 |---|---|
@@ -182,30 +210,30 @@ build).
 | Where the generic ramdisk lives | **`init_boot`** (header v4). `boot.img` = kernel only; vendor ramdisk lives in `vendor_boot`. Matches the CLAUDE.md partition table. *(blocking — resolved)* |
 | Ramdisk compression | Kleaf default **`lz4`** (`build/kernel/_setup_env.sh:287-289`: `RAMDISK_COMPRESS="lz4 -c -l …"`, `RAMDISK_EXT="lz4"`; gzip is the alternate branch). This is the "lz4_legacy" magiskboot must match. **Confirm against the stock `init_boot` by unpacking it device-side** (see OWNER ACTION §0.7). |
 | SEANDROIDENFORCE footer present on stock images? | **Not represented in kernel source** (grep across `kernel_platform/` = empty) — it is appended by Samsung's packaging tooling, so it must be re-appended after any repack (Category B). Presence on the stock `init_boot`/`boot` to confirm by unpacking device-side. |
-| vbmeta / AVB: what must be disabled to boot a modified image | Source signs `boot.img` via `avbtool add_hash_footer --algorithm SHA256_RSA4096 --partition_name boot` (`msm-kernel/avb_boot_img.bzl`). A self-built/modified `boot`+`init_boot` needs AVB **satisfied or disabled** — typically flashing a patched `vbmeta` with `--disable-verity --disable-verification`. Whether this is actually required depends on what the current custom ROM already does — **OWNER to confirm** (below). *(blocking — device/ROM-dependent)* |
-| Does the current custom ROM already disable verity/verification? | `TBD` — **OWNER ACTION** (device/ROM-side). |
+| vbmeta / AVB: what must be disabled to boot a modified image | Source signs `boot.img` via `avbtool add_hash_footer --algorithm SHA256_RSA4096 --partition_name boot` (`msm-kernel/avb_boot_img.bzl`). **Owner-confirmed: the current ROM already ships a patched/disabled vbmeta**, so a self-built `boot`+`init_boot` boots without an extra AVB step — *provided a stock `vbmeta` is never re-flashed over it*. `scripts/package.sh`/`FLASHING.md` will still emit the `--disable-verity --disable-verification` vbmeta guidance as the safety net. *(resolved)* |
+| Does the current custom ROM already disable verity/verification? | **YES** — BeyondROM 5.0 (DZDP) ships with vbmeta already patched (owner-confirmed). *(resolved)* |
 | KMI / Android version string | **`android14-6.1`** (`common/build.config.constants:1` and `msm-kernel/build.config.constants:1`, `BRANCH=android14-6.1`). This is the SUSFS branch key → target `susfs4ksu` branch `gki-android14-6.1`. (Platform is Android 16, but the KMI generation is android14-6.1.) *(needed for SUSFS branch match — resolved)* |
 
-## 0.7 Device / flashing environment *(blocking — device-side, OWNER ACTION)*
-
-None of these are in the source archive; they must come off the phone. Please run and paste back.
+## 0.7 Device / flashing environment *(owner-supplied)*
 
 | Field | Value |
 |---|---|
-| Current ROM (name + version) | `TBD` |
-| Current root method (Magisk? KSU? version) | `TBD` |
-| Kernel flasher app in use | `TBD` |
-| Stock images backed up? (`boot` / `init_boot` / `vendor_boot` / `vendor_dlkm`) | `TBD` *(blocking — this is the rollback path)* |
+| Current ROM (name + version) | **BeyondROM 5.0**, firmware base **DZDP** (thread: `xdaforums.com/t/…4654134/`). Base firmware **matches this source drop** (`S928BXXU5DZDP`) — good for module ABI. |
+| Current root method | **Magisk Alpha** (`e8a58776-alpha`), a closed-source Magisk fork prepatched into the ROM. Owner plans to remove it before we install KernelSU Next. |
+| Kernel flasher app in use | `TBD` (owner to choose; AnyKernel3 needs a root-capable flasher — see rollback caveat below re: removing Magisk first) |
+| Stock images backed up? (`boot` / `init_boot` / `vendor_boot` / `vendor_dlkm`) | **No independent backup.** Rollback currently relies on the ROM's own images + Magisk's uninstall/restore. **See the risk note below — this is not yet a complete rollback path.** *(blocking before any flash)* |
 | Location of backups | `TBD` |
-| Coresight/ETM present? (`ls /sys/bus/coresight`) | `TBD` (informational; AutoFDO already dropped) |
+| Coresight/ETM present? | **Present** — `coresight-*.ko` are in `modules.load` (informational only; AutoFDO already dropped). |
 
-> **OWNER ACTION (device):**
-> 1. Confirm you have **known-good stock copies** of `boot.img`, `init_boot.img`, `vendor_boot.img`, and
->    `vendor_dlkm.img` for build `S928BXXU5DZDP` saved somewhere off the phone. This is the rollback path and
->    is **blocking** — do not flash anything until it exists. (These come from the stock firmware `AP_*.tar.md5`
->    for this exact build.)
-> 2. Tell me: current ROM name/version, current root (Magisk/KSU + version), and which flasher you use.
-> 3. Paste the outputs from the §0.3 and §0.6 device commands.
+> **ROLLBACK-PATH RISK (must resolve before the first flash — not before build work).**
+> The proposed fallback (uninstall Magisk Alpha to "restore original images") only covers **`boot`/`init_boot`**
+> — the partitions Magisk itself patched. Our module pipeline also repacks **`vendor_boot`/`vendor_dlkm`**, and
+> those live inside `super` — **Magisk never backs them up**, so a Magisk restore cannot undo a bad
+> `vendor_dlkm` flash. The complete, reliable rollback is the **stock `S928BXXU5DZDP` firmware** (which matches
+> this source): download the official 4-file firmware for this exact build and keep the `AP_*.tar.md5` (it
+> contains pristine `boot.img`, `init_boot.img`, `vendor_boot.img`, and `super.img`→`vendor_dlkm`). Odin-flashing
+> that stock AP is the guaranteed recovery. **Recommended owner action before Phase 1's flash step:** obtain and
+> stash that stock DZDP firmware off-device. (Build/CI work in Phase 1 does not need it; the flash step does.)
 
 ## Open questions
 
@@ -214,6 +242,8 @@ None of these are in the source archive; they must come off the phone. Please ru
 - Effect of `CONFIG_MODULE_SIG_PROTECT=y` on loading the out-of-tree `kernelsu.ko` — verify at LKM load time.
 - Effect of disabling `CONFIG_UH` on early boot (uH is Samsung's micro-hypervisor, initialized before the
   kernel) — the standard custom-kernel approach, but verify at first boot in Phase 3.
-- Doc drift: `CLAUDE.md`/`PLAN.md` say "Android 14"; actual platform is Android 16, GKI kernel 6.1 KMI
-  `android14-6.1`. Recommend a short `DECISIONS.md` note so it isn't reopened.
-- Stock `init_boot` ramdisk compression: source default is `lz4`; confirm by unpacking the real image.
+- Doc drift (Android 16 platform vs `android14-6.1` KMI): **recorded in `DECISIONS.md` 2026-08-12.**
+- Stock `init_boot` ramdisk compression: source default is `lz4`; confirm by unpacking the real image
+  (deferred to Phase 3 when we first repack `init_boot`).
+- Rollback path: owner has no independent stock backup; the stock DZDP firmware must be stashed before the
+  first flash (`DECISIONS.md` 2026-08-12, §0.7).
