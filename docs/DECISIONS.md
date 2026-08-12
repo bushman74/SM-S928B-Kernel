@@ -109,3 +109,65 @@ reviewable. Only the genuinely image-level pieces belong in packaging.
 **Would change our mind:** per-symbol, if §0.4 shows a specific protection is force-selected
 and disabling it breaks the build *and* a clean C patch is impractical, that one protection
 drops to a post-build image patch — recorded as its own note, not a blanket policy change.
+
+---
+
+## 2026-08-12 — Platform is Android 16; the kernel KMI is still `android14-6.1`
+
+**Decided:** treat `android14-6.1` as the KMI generation for every KMI-sensitive choice (SUSFS
+branch = `gki-android14-6.1`, prebuilt/module matching), independent of the platform Android
+version.
+
+**Why:** the source drop `S928BXXU5DZDP` is an **Android 16 / One UI 8** firmware (archive name
+`..._16_...`; `README_Platform.txt`: "Android 16.0"), but its GKI kernel is **6.1.145** with
+`BRANCH=android14-6.1` (`kernel_platform/common/build.config.constants:1`). "android14-6.1" is a
+GKI KMI generation string, not the platform version — GKI keeps a frozen KMI across Android
+releases. The "Android 14" phrasing in `CLAUDE.md`/`PLAN.md` is imprecise but harmless; this note
+exists so it isn't mistaken for a stale source drop or re-investigated.
+
+**Would change our mind:** a future drop whose `build.config.constants` shows a different `BRANCH`.
+
+---
+
+## 2026-08-12 — Device baseline BeyondROM 5.0 (DZDP); rollback is the stock DZDP firmware
+
+**Decided:** the working baseline is the owner's **BeyondROM 5.0**, firmware base **DZDP**, which
+matches this source drop (`S928BXXU5DZDP`). The rollback/recovery path we rely on is the **official
+stock DZDP firmware flashed via Odin**, not Magisk's restore.
+
+**Why:**
+- **ABI match.** Building from DZDP source against a device already on DZDP keeps our kernel aligned
+  with the vendor modules and the rest of the ROM. (If BeyondROM is later updated — the XDA thread
+  already lists a DZG1 build — we want the matching source drop before rebuilding.)
+- **AVB is already handled.** The ROM ships a patched/disabled `vbmeta` (owner-confirmed), so a
+  self-built `boot`/`init_boot` boots without an extra AVB step, as long as a stock `vbmeta` is never
+  re-flashed over it.
+- **Magisk restore is not a sufficient rollback for this project.** Root is currently Magisk Alpha
+  (`e8a58776-alpha`, a closed-source fork), which the owner will remove before KernelSU Next. Magisk
+  only backs up `boot`/`init_boot`. Our module pipeline also repacks `vendor_boot`/`vendor_dlkm`
+  (inside `super`), which Magisk never touches — so only the stock firmware can undo a bad module
+  flash.
+
+**Consequence (blocking before the first flash, not before build work):** obtain and stash the stock
+`S928BXXU5DZDP` firmware (keep `AP_*.tar.md5`) off-device. This is the guaranteed recovery.
+
+**Would change our mind:** owner produces verified independent backups of all four partitions
+(`boot`/`init_boot`/`vendor_boot`/`vendor_dlkm`) for DZDP by other means.
+
+---
+
+## 2026-08-12 — Root is KernelSU **Next** (LKM), following its own install flow
+
+**Decided (reaffirming the 2026-08-11 LKM decision with the correct project):** the root solution is
+**KernelSU Next** (`github.com/KernelSU-Next/KernelSU-Next`), **not** upstream KernelSU. Our kernel is
+GKI 2.0 with a stable KMI, so we use KSU Next's **LKM install path** (module into `init_boot`), per
+`kernelsu-next.github.io/webpage/pages/installation.html`.
+
+**Why:** owner specified KernelSU Next explicitly. LKM mode fits a GKI kernel and keeps root
+updatable without a kernel rebuild. KSU Next's non-GKI *built-in* integration guide
+(`.../how-to-integrate-for-non-gki.html`) is the **fallback** already recorded on 2026-08-11 (source
+hooks compiled in) — reached only if a loadable `.ko` proves impractical on the Samsung KMI despite
+neutralized protections. §0.5 evidence is favourable to LKM: `KPROBES=y`, signing not forced.
+
+**Would change our mind:** the LKM refuses to load on our built kernel (vermagic/KMI or
+`MODULE_SIG_PROTECT`) → switch to KSU Next built-in integration; record it here.
