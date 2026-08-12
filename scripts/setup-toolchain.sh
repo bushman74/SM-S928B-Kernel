@@ -13,8 +13,9 @@ set -euo pipefail
 TOOLCHAIN_ARG="${1:-reference}"
 TOOLCHAIN_DIR="${TOOLCHAIN_DIR:-$PWD/toolchain}"
 
-# Filled in during Phase 0 from Samsung's own build scripts. See docs/FACTS.md §0.5.
-REFERENCE_CLANG_BUILD_ID=""   # e.g. "r487747c" — READ IT, DON'T GUESS IT
+# Read from Samsung's own build config, not guessed. See docs/FACTS.md §0.5.
+#   kernel_platform/common/build.config.constants:2  ->  CLANG_VERSION=r487747c
+REFERENCE_CLANG_BUILD_ID="r487747c"
 
 AOSP_CLANG_BASE="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main"
 
