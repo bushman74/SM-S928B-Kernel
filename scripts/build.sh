@@ -34,7 +34,9 @@ mkdir -p "$OUT_DIR" "$DIST_DIR"
 
 echo "==> Building pineapple/gki  (LTO=$LTO)"
 cd "$KP"
-./build_with_bazel.py -t pineapple gki --lto="$LTO" --out_dir "$OUT_DIR" \
+# --skip abl: don't build the bootloader (ABL) dist target — it's firmware-coupled and we
+# don't repack it. This matches Samsung's own prepare_vendor.sh invocation.
+./build_with_bazel.py -t pineapple gki --skip abl --lto="$LTO" --out_dir "$OUT_DIR" \
   2>&1 | tee "$ROOT/out/build.log"
 
 SRC="$OUT_DIR/dist"

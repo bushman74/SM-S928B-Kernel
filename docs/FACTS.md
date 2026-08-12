@@ -210,13 +210,19 @@ into `kernel_platform/prebuilts/`:
 | `bazel/linux-x86_64` | `platform/prebuilts/bazel/linux-x86_64` | |
 | `jdk/jdk11` | `platform/prebuilts/jdk/jdk11` | |
 | `ndk-r23` | `toolchain/prebuilts/ndk/r23` | referenced by `workspace.bzl` |
+| `gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8` | `platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8` | host glibc **sysroot** for the hermetic tools |
 
-**Not fetched:** `prebuilts/gcc` (only referenced by `build.config.net_test`, not our build — verified by grep,
-so excluding Samsung's shipped `kernel_platform/gcc/` is safe); `prebuilts/rust` (the GKI manifest does not
-include it → `CONFIG_RUST` is off for us). `build/`, `common/`, `external/` are already in the Samsung tree.
-`prebuilts/bazel/common` is referenced by `workspace.bzl` but not in the manifest — flagged for the first CI
-run to confirm it isn't needed. **Verification is the first CI build** (the sandbox can't fetch/build multi-GB
-prebuilts). The workflow must cache `kernel_platform/prebuilts/` so this ~6 GB fetch is a one-time cost.
+The gcc entry is easy to miss: nothing in a BUILD file references `prebuilts/gcc` (grep is clean), but the tree
+reaches its `sysroot` via the symlink `build/kernel/build-tools/sysroot -> ../../../prebuilts/gcc/.../sysroot`.
+Omitting it made `//build/kernel`'s `sysroot` glob empty and the `hermetic_tools_toolchain` fail to register —
+CI run #1's failure. Method to catch such cases: enumerate every in-tree symlink whose target is under
+`prebuilts/` (that set is exactly `build-tools`, `kernel-build-tools`, `clang-tools`, and this `gcc` sysroot).
+
+**Not fetched:** `prebuilts/rust` (the GKI manifest doesn't include it → `CONFIG_RUST` is off for us).
+Samsung's own `kernel_platform/gcc/` (a different path, a full GCC toolchain) stays excluded — unreferenced.
+`build/`, `common/`, `external/` are already in the Samsung tree. `prebuilts/bazel/common` is referenced by
+`workspace.bzl` but not in the manifest — still flagged, though run #1 got past bazel startup so it may be
+optional. The workflow caches `kernel_platform/prebuilts/` so the ~6 GB fetch is a one-time cost.
 
 ## 0.6 Boot images, ramdisk & verified boot *(blocking — resolved)*
 
