@@ -85,5 +85,41 @@ shallow_clone "toolchain/prebuilts/ndk/r23"           "ndk-r23"
 shallow_clone "platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" \
               "gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
 
-echo "==> prebuilts populated under $PREBUILTS"
+# --- Verify the fetch, loudly, before the build wastes time on a broken toolchain ---
+echo "==> Verifying prebuilts..."
+fail=0
+
+# 1. Every project we expect is present and non-empty.
+for d in "clang/host/linux-x86/clang-$CLANG_ID/bin" \
+         "build-tools" "clang-tools" "kernel-build-tools" \
+         "bazel/linux-x86_64" "jdk/jdk11" "ndk-r23" \
+         "gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8/sysroot"; do
+  if [[ ! -e "$PREBUILTS/$d" || -z "$(ls -A "$PREBUILTS/$d" 2>/dev/null)" ]]; then
+    echo "  FAIL: prebuilts/$d is missing or empty" >&2; fail=1
+  fi
+done
+
+# 2. Clang actually executes (not just present).
+if ! "$PREBUILTS/clang/host/linux-x86/clang-$CLANG_ID/bin/clang" --version >/dev/null 2>&1; then
+  echo "  FAIL: clang-$CLANG_ID is present but does not run" >&2; fail=1
+fi
+
+# 3. The generalized check for CI run #1's failure class: every in-tree symlink that points
+#    into prebuilts/ must now resolve. This catches a *missing* prebuilt (e.g. the gcc
+#    sysroot) here — at fetch time, with the exact dangling path named — instead of as a
+#    cryptic bazel "glob didn't match anything" error minutes into the build.
+mapfile -t _dangling < <(find "$KP" -type l -lname '*prebuilts*' '!' -exec test -e {} ';' -print 2>/dev/null)
+if (( ${#_dangling[@]} )); then
+  echo "  FAIL: ${#_dangling[@]} in-tree symlink(s) into prebuilts/ do not resolve:" >&2
+  for _l in "${_dangling[@]}"; do echo "    $_l -> $(readlink "$_l")" >&2; done
+  echo "    (a prebuilt project is missing from the fetch list above)" >&2
+  fail=1
+fi
+
+if (( fail )); then
+  echo "ERROR: prebuilts verification FAILED (see FAIL lines). The build would fail later; stopping now." >&2
+  exit 1
+fi
+
+echo "==> prebuilts OK under $PREBUILTS"
 echo "    clang: $PREBUILTS/clang/host/linux-x86/clang-$CLANG_ID"

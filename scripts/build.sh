@@ -32,6 +32,21 @@ OUT_DIR="$ROOT/out/kbuild"
 DIST_DIR="$ROOT/out/dist"
 mkdir -p "$OUT_DIR" "$DIST_DIR"
 
+# --- Pre-flight: fail fast and clearly, before committing to a ~1 hour compile ---
+echo "==> Pre-flight checks"
+# Source integrity — is this the kernel we expect (guards a broken/partial checkout)?
+_ver="$(sed -nE 's/^VERSION = //p; s/^PATCHLEVEL = //p; s/^SUBLEVEL = //p' "$KP/common/Makefile" | paste -sd. -)"
+[[ "$_ver" == 6.1.* ]] || { echo "ERROR: unexpected kernel version '$_ver' in common/Makefile (want 6.1.x)." >&2; exit 1; }
+# The hermetic-tools sysroot symlink must resolve — this is CI run #1's failure class,
+# caught here in a millisecond instead of minutes into bazel analysis.
+[[ -e "$KP/build/kernel/build-tools/sysroot" ]] \
+  || { echo "ERROR: build/kernel/build-tools/sysroot does not resolve — prebuilts incomplete; run scripts/setup-toolchain.sh." >&2; exit 1; }
+# Disk guard — a cold Kleaf build needs tens of GB; fail now, not mid-link with 'No space left'.
+_avail_gb="$(df -BG --output=avail "$ROOT" 2>/dev/null | tail -1 | tr -dc '0-9')"
+[[ -z "$_avail_gb" || "$_avail_gb" -ge 25 ]] \
+  || { echo "ERROR: only ${_avail_gb} GB free on $ROOT; a Kleaf build needs ~25+ GB. Free disk first." >&2; exit 1; }
+echo "    kernel=$_ver  sysroot=ok  free=${_avail_gb:-?}GB  LTO=$LTO"
+
 echo "==> Building pineapple/gki  (LTO=$LTO)"
 cd "$KP"
 # --skip abl: don't build the bootloader (ABL) dist target — it's firmware-coupled and we
@@ -69,4 +84,13 @@ PATS
 
 echo "==> Staged into $DIST_DIR:"
 ls -la "$DIST_DIR"
-echo "==> $(find "$DIST_DIR" -maxdepth 1 -name '*.ko' | wc -l) modules, Image present: $(ls "$DIST_DIR"/Image* 2>/dev/null | head -1 || echo NO)"
+
+# --- Post-build sanity: a green bazel exit is not proof the artifacts are usable ---
+_img="$(ls "$DIST_DIR"/Image* 2>/dev/null | head -1 || true)"
+_nmods="$(find "$DIST_DIR" -maxdepth 1 -name '*.ko' | wc -l)"
+echo "==> Result: Image=${_img:-NONE}  modules=$_nmods"
+[[ -n "$_img" ]] || { echo "ERROR: no kernel Image staged — the build produced no Image." >&2; exit 1; }
+[[ -s "$_img" ]] || { echo "ERROR: staged Image is zero bytes." >&2; exit 1; }
+if (( _nmods < 100 )); then
+  echo "WARN: only $_nmods modules staged (pineapple gki normally builds ~300+). Possible partial build or config regression — check the log before trusting this artifact." >&2
+fi

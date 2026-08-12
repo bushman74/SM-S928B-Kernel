@@ -32,18 +32,29 @@ No phase begins before the previous gate passes.
 
 ## Phase 1 — Reproducible stock build that boots
 
-**Goal:** compile Samsung's source, unmodified except for the minimum required to boot a
-self-built Samsung kernel, and have it boot with all hardware working.
+**Goal:** compile Samsung's source and boot it with all hardware working, changing only the
+minimum required to make a *self-built* kernel boot on **this** device.
 
-- [ ] Import the archive to `vanilla`; tag `osrc/<build-string>`
-- [ ] `scripts/setup-toolchain.sh` — fetch the reference Clang
-- [ ] `scripts/build.sh` — the single canonical build invocation
-- [ ] `scripts/package.sh` — repack + AnyKernel3 zip, including SEANDROIDENFORCE and
-      vbmeta handling (the minimum Samsung bootability, no protection neutralization yet)
-- [ ] `.github/workflows/build.yml` green (manual trigger)
+> **Device reality (owner-confirmed) — protections come in here, not Phase 3.** On this
+> unlocked, custom-ROM (BeyondROM) device, a raw *unmodified* self-built kernel will **not**
+> boot: the ROM's working kernel already has Samsung's integrity/modification detectors
+> disabled, so re-enabling them (as a from-stock-source build does by default) trips
+> uH/RKP/KDP and the integrity checks → bootloop. Therefore **disabling the Samsung
+> boot-blocking protections is part of "the minimum to boot"** and lives in Phase 1, *before*
+> any KernelSU/SUSFS work. (Phase 3 keeps only the module-loading/LKM-specific pieces.)
+
+- [x] Import the archive to `vanilla`; tag `osrc/<build-string>` (done: `osrc/S928BXXU5DZDP`)
+- [x] `scripts/setup-toolchain.sh` — fetch the reference Clang + prebuilts (green in CI)
+- [x] `scripts/build.sh` — the single canonical build invocation (compiles, CI run #2)
+- [ ] **Disable the Samsung boot-blocking protections — UH/RKP/KDP, DEFEX, PROCA, FIVE —
+      one per commit**, at the defconfig level where possible (symbols/evidence: `FACTS §0.4`,
+      none are force-selected). Granular commits so a bootloop can be bisected to one protection.
+- [ ] `scripts/package.sh` — repack to a flashable `boot.img` (+ SEANDROIDENFORCE / vbmeta
+      handling as needed). Simplest first flash: our `boot.img` only, keeping stock modules.
+- [x] `.github/workflows/build.yml` green (manual trigger)
 - [ ] Owner flashes the result
 
-**Exit gate:** device boots on a kernel built from (essentially) unmodified source, with
+**Exit gate:** device boots on a self-built kernel (protections off, otherwise unmodified), with
 **Wi-Fi, Bluetooth, mobile data, S-Pen, camera, and fingerprint all working**. Owner confirms
 each. Commit `Verified: boots+all-hw`. Do not proceed on a partial pass — "boots but no
 Bluetooth" means the module pipeline is wrong and every later phase inherits the bug.
@@ -64,14 +75,17 @@ Bluetooth" means the module pipeline is wrong and every later phase inherits the
 
 ## Phase 3 — Samsung protection neutralization + KernelSU Next (LKM)
 
-This is the core of the project. Order matters: the kernel must first be able to boot modified
-and to load an out-of-tree module, *then* the LKM goes into init_boot.
+This is the core of the project. Order matters: the kernel must first boot modified (Phase 1
+already disables the boot-blocking protections) and be able to load an out-of-tree module,
+*then* the LKM goes into init_boot.
 
-- [ ] Enable kprobes if Samsung disabled them (`CONFIG_KPROBES` etc.) — one commit
-- [ ] Neutralize Samsung protections that block a modified kernel / module loading, **in source**,
-      **one per commit**: PROCA, RKP/uH, KDP, DEFEX, and any module-signing enforcement.
-      Prefer defconfig off-switch → targeted C patch → image patch only as last resort (see the
-      skill's Category A). Each commit notes what it protected and which level was used and why.
+- [x] Kprobes already enabled by Samsung (`CONFIG_KPROBES=y`, `FACTS §0.5`) — no patch needed.
+- [ ] The Samsung boot-blocking protections (UH/RKP/KDP, DEFEX, PROCA, FIVE) are **already
+      neutralized in Phase 1** (a self-built kernel can't boot on this device otherwise). Here,
+      only address anything that specifically blocks *module loading* if the LKM is rejected —
+      chiefly verify `MODULE_SIG_PROTECT=y` does not reject the unsigned `kernelsu.ko`
+      (`MODULE_SIG_FORCE` is not set, so it should load). If a targeted C patch is needed, one
+      per commit (skill Category A: defconfig → C patch → image patch as last resort).
 - [ ] Add KernelSU Next to the tree (pinned tag); build `kernelsu.ko` **against our kernel**
 - [ ] `scripts/patch-init-boot.sh` — install the LKM into `init_boot.img` (unpack ramdisk,
       inject ksud + the KMI-matched `.ko`, repack with matching compression, re-apply
