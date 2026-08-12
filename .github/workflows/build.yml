@@ -1,0 +1,173 @@
+name: Build kernel
+
+# MANUAL ONLY. Do not add push / pull_request / schedule triggers — CI minutes and disk
+# are not to be spent automatically. Every build is started by hand from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      toolchain:
+        description: "Toolchain: 'reference' (what Samsung used) or an AOSP clang build id"
+        required: true
+        default: reference
+      lto:
+        description: "LTO mode: none | thin | full"
+        required: true
+        default: thin
+        type: choice
+        options: [none, thin, full]
+      kernelsu:
+        description: "Also build kernelsu.ko against this kernel and emit a patched init_boot.img (LKM mode)"
+        required: true
+        default: false
+        type: boolean
+      susfs:
+        description: "Apply SUSFS (requires kernelsu=true and the SUSFS kernel patch in patches/)"
+        required: false
+        default: false
+        type: boolean
+      clean:
+        description: "Ignore ccache and build from scratch"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Free runners cap at 6 hours. A cold Kleaf build on 4 vCPU can get close.
+    timeout-minutes: 350
+
+    steps:
+      # Fail fast on impossible input combinations before spending an hour building.
+      - name: Validate inputs
+        run: |
+          if [[ "${{ inputs.susfs }}" == "true" && "${{ inputs.kernelsu }}" != "true" ]]; then
+            echo "::error::susfs=true requires kernelsu=true — SUSFS pairs with a SUSFS-aware KernelSU."
+            exit 1
+          fi
+
+      # MUST be early. Runners ship with ~14 GB usable of a ~72 GB volume; a Kleaf
+      # build wants far more. This reclaims roughly 30 GB.
+      # Pinned to a tag on purpose: @main is mutable and would change under us mid-project.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false   # keep swap; Bazel link steps are memory-hungry
+
+      - name: Report starting disk
+        run: df -h /
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      # These are written in Phase 1/3. Until then the job should say so plainly
+      # rather than dying on "No such file or directory" three steps later.
+      - name: Preflight — required scripts present and executable
+        run: |
+          missing=0
+          for s in scripts/setup-toolchain.sh scripts/build.sh scripts/package.sh; do
+            if [[ ! -f "$s" ]]; then
+              echo "::error::$s does not exist yet. See docs/PLAN.md — it is written in Phase 1."
+              missing=1
+            elif [[ ! -x "$s" ]]; then
+              echo "::error::$s exists but is not executable. Run: git update-index --chmod=+x $s"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache cpio curl flex git \
+            libelf-dev libssl-dev lz4 zstd python3 python3-pip \
+            rsync unzip zip openjdk-17-jdk-headless
+
+      - name: Restore ccache
+        if: ${{ inputs.clean == false }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          # 10 GB repo-wide cache limit, evicted after 7 days unused.
+          key: ccache-${{ inputs.toolchain }}-${{ inputs.lto }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ inputs.toolchain }}-${{ inputs.lto }}-
+            ccache-${{ inputs.toolchain }}-
+
+      - name: Configure ccache
+        run: |
+          ccache -M 8G
+          ccache -o compression=true
+          ccache -z
+          echo "USE_CCACHE=1" >> "$GITHUB_ENV"
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+
+      - name: Fetch toolchain
+        run: ./scripts/setup-toolchain.sh "${{ inputs.toolchain }}"
+
+      - name: Build
+        env:
+          LTO_MODE: ${{ inputs.lto }}
+          WITH_KERNELSU: ${{ inputs.kernelsu }}
+          WITH_SUSFS: ${{ inputs.susfs }}
+          # Phase 2 requires two clean builds to match. Without these pinned, the
+          # timestamp/user/host baked into the image differ on every run and the
+          # comparison is meaningless.
+          KBUILD_BUILD_TIMESTAMP: "Thu Jan  1 00:00:00 UTC 1970"
+          KBUILD_BUILD_USER: builder
+          KBUILD_BUILD_HOST: e3q
+        run: ./scripts/build.sh
+
+      - name: Package
+        env:
+          WITH_KERNELSU: ${{ inputs.kernelsu }}
+          WITH_SUSFS: ${{ inputs.susfs }}
+        run: ./scripts/package.sh
+        # package.sh handles the partition-level steps only (SEANDROIDENFORCE footer, vbmeta,
+        # ramdisk compression). Security-protection neutralization is done in source, not here.
+        # When WITH_KERNELSU is true it builds kernelsu.ko against this kernel and emits a
+        # patched init_boot.img.
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
+
+      - name: Report final disk
+        if: always()
+        run: df -h /
+
+      - name: Upload flashable artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e3q-kernel-${{ github.sha }}
+          path: |
+            out/dist/*.zip
+            out/dist/*.img
+          retention-days: 30
+          if-no-files-found: error
+
+      # Build logs are the thing you actually need when it fails. Keep them always.
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.sha }}
+          path: |
+            out/**/*.log
+            out/build.log
+          retention-days: 30
+          if-no-files-found: warn

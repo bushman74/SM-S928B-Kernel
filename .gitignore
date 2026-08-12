@@ -1,0 +1,23 @@
+# Build output and fetched toolchains (Phase 1+). These are large and reproducible.
+/out/
+/toolchain/
+/scratch/
+*.log
+
+# Never commit binaries, firmware, or kernel modules (see CLAUDE.md).
+*.img
+*.img.lz4
+*.ko
+*.tar
+*.tar.gz
+*.tar.md5
+*.tgz
+*.gz
+*.lz4
+*.zst
+*.zip
+
+# Editor / OS cruft
+*.swp
+*~
+.DS_Store
