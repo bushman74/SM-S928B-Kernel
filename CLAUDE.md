@@ -100,15 +100,19 @@ caused a regression. Finer is always safer; err on the side of more, smaller com
 
 ```
 vanilla            import-only. One commit per Samsung OSRC drop. Tagged by firmware
-                   build string (e.g. `osrc/S928BXXU5CXK1`). NOTHING ELSE EVER LANDS HERE.
+                   build string (current: `osrc/S928BXXU5DZDP`). NOTHING ELSE EVER LANDS HERE.
 main               vanilla + our patch series. This is what CI builds.
 patches/           our changes as a rebasable series (git format-patch output):
                    Samsung protection neutralization, kprobes/config enablement,
                    later the SUSFS kernel patch.
 ```
 
-There are **no** per-feature branches. Build variants (toolchain, LTO mode, KernelSU on/off,
-later SUSFS on/off) are **workflow inputs**, not branches.
+Work happens on **short-lived task branches** (`task/<name>`, e.g. `task/thin-lto`,
+`task/kernelsu-lkm`) opened as pull requests into `main` and merged when done. Build **variants**
+(toolchain, LTO mode, KernelSU on/off, later SUSFS on/off) are **workflow inputs**, not branches —
+a variant is a way to build the same code, not a change to it. (This supersedes an earlier
+"no per-feature branches" rule, which was really about variants; see `docs/DECISIONS.md`
+2026-08-12.)
 
 KernelSU Next (LKM) and the SUSFS userspace module are packaging/artifact steps, not kernel
 source — they produce a patched `init_boot.img`, not commits on `main`. The kernel-side
