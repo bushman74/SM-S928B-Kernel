@@ -196,11 +196,27 @@ CI must reconstruct the android14-6.1 kernel `prebuilts/` set before it can buil
 | `//prebuilts/rust/linux-x86` | Rust toolchain | 1 |
 | `//prebuilts/bazel`, `//prebuilts/jdk/jdk11/linux-x86` | bazel `remote_java_tools`, JDK11 (`workspace.bzl:120-135`) | — |
 
-**Ground truth for exact projects + pinned revisions = the AOSP kernel manifest for `android14-6.1`**
-(`android.googlesource.com/kernel/manifest`, branch `android14-6.1`) — *not* to be guessed per-path. `README_Kernel.txt`
-points the same way ("get the toolchain … decompress in `kernel_platform/prebuilts`"). **Consequence:**
-`scripts/setup-toolchain.sh` must fetch this whole prebuilts set into `kernel_platform/prebuilts/`, not just a
-single clang tarball. This is the main open task before CI can produce a `boot.img`.
+**Resolved from ground truth — the AOSP GKI manifest** `android.googlesource.com/kernel/manifest`, branch
+**`common-android14-6.1`** (`default.xml`). It pins every prebuilt at revision **`main-kernel-build-2023`**,
+each `clone-depth=1`, from `android.googlesource.com`. The exact projects `scripts/setup-toolchain.sh` fetches
+into `kernel_platform/prebuilts/`:
+
+| Fetched into `prebuilts/` | googlesource repo | Notes |
+|---|---|---|
+| `clang/host/linux-x86` | `platform/prebuilts/clang/host/linux-x86` | sparse checkout: `clang-r487747c` + `kleaf/` only (full repo is ~40 GB) |
+| `build-tools` | `platform/prebuilts/build-tools` | |
+| `clang-tools` | `platform/prebuilts/clang-tools` | `bindgen` |
+| `kernel-build-tools` | `kernel/prebuilts/build-tools` | mkbootimg/avbtool/lz4/… |
+| `bazel/linux-x86_64` | `platform/prebuilts/bazel/linux-x86_64` | |
+| `jdk/jdk11` | `platform/prebuilts/jdk/jdk11` | |
+| `ndk-r23` | `toolchain/prebuilts/ndk/r23` | referenced by `workspace.bzl` |
+
+**Not fetched:** `prebuilts/gcc` (only referenced by `build.config.net_test`, not our build — verified by grep,
+so excluding Samsung's shipped `kernel_platform/gcc/` is safe); `prebuilts/rust` (the GKI manifest does not
+include it → `CONFIG_RUST` is off for us). `build/`, `common/`, `external/` are already in the Samsung tree.
+`prebuilts/bazel/common` is referenced by `workspace.bzl` but not in the manifest — flagged for the first CI
+run to confirm it isn't needed. **Verification is the first CI build** (the sandbox can't fetch/build multi-GB
+prebuilts). The workflow must cache `kernel_platform/prebuilts/` so this ~6 GB fetch is a one-time cost.
 
 ## 0.6 Boot images, ramdisk & verified boot *(blocking — resolved)*
 

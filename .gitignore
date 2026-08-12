@@ -4,6 +4,11 @@
 /scratch/
 /build.log
 
+# Prebuilts fetched by scripts/setup-toolchain.sh (clang, kernel-build-tools, jdk,
+# ndk, ...) from the android14-6.1 kernel manifest. Multi-GB, reproducible, and each
+# is its own git checkout — never commit them.
+/kernel_platform/prebuilts/
+
 # Samsung's OSRC drop ships a ~131 MB host GCC prebuilt and build-machine bazel
 # symlinks; neither belongs in git (CLAUDE.md: never commit toolchains). The GKI
 # build fetches clang via scripts/setup-toolchain.sh.
