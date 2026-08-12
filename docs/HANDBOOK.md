@@ -254,9 +254,11 @@ modules in §8, which *are* kernel behaviour and are fixed in source.
 
 These are Samsung/Knox protections that block a modified kernel from booting and/or block an
 out-of-tree module (the root LKM) from loading. They are neutralized **in source** (we have it),
-one per commit, in Phase 3. `docs/FACTS.md §0.4` has the exact evidence; the key structural
-finding is that **none of them are force-selected** (`select` grep is empty), so each can be
-turned off at the **defconfig** level (the cleanest option) rather than needing a C patch.
+one per commit. **On this custom-ROM device they must be disabled in Phase 1** — a self-built
+kernel with them enabled will not boot at all (owner-confirmed; `DECISIONS.md 2026-08-12`), so
+this is not deferred to the root phase. `docs/FACTS.md §0.4` has the exact evidence; the key
+structural finding is that **none of them are force-selected** (`select` grep is empty), so each
+can be turned off at the **defconfig** level (the cleanest option) rather than needing a C patch.
 
 | Protection | What it does | Symbol(s) | Location | Planned off-switch |
 |---|---|---|---|---|
@@ -305,6 +307,15 @@ The three scripts:
 | `scripts/build.sh` | Runs `build_with_bazel.py -t pineapple gki --skip abl --lto=$LTO_MODE`, then stages `Image` + `*.ko` + dtbs into `out/dist/`. | Compiles (CI run #2, LTO=none). |
 | `scripts/package.sh` | **First version:** bundles the built kernel+modules into a zip so CI has an artifact and the dist layout is visible. The real flashable repack (boot/init_boot/vendor_dlkm, SEANDROIDENFORCE, vbmeta, AnyKernel3) is the next step. | Placeholder; real repack pending stock images. |
 
+**Fail-fast verification (built into the scripts + workflow):** to surface problems early and
+clearly rather than after a long compile, the pipeline self-checks at each stage —
+`setup-toolchain.sh` verifies every prebuilt is present, that clang runs, and that **no in-tree
+symlink into `prebuilts/` is left dangling** (the generalized check for run #1's failure class);
+`build.sh` pre-flights the source version, the sysroot symlink, and free disk (≥25 GB) before the
+compile, and post-checks that an `Image` and a plausible module count came out; `package.sh`
+refuses to bundle a build with zero modules; and the workflow asserts ≥40 GB free before the
+fetch. Each failure prints a specific, greppable message naming what and where.
+
 **CI build history (running record):**
 
 | Run | Commit | LTO | Result | Lesson |
@@ -343,6 +354,36 @@ handbook). Commits follow the granularity and detail rules in `CLAUDE.md`.
 Historical note: `main` was not rebased onto `vanilla` (its history predates the split); `vanilla`
 is the pristine base for future re-imports, not a literal ancestor of today's `main`.
 
+### 11.1 Re-importing a new Samsung firmware drop
+
+Samsung periodically ships new OSRC source drops (e.g. a `DZG1` build after our `DZDP`). The
+process is mechanical and scripted — **`scripts/import-vanilla.sh`**:
+
+```
+scripts/import-vanilla.sh /path/to/SM-S928B_<n>_Opensource_<BUILD>.zip
+```
+
+It (1) verifies the zip and records its SHA256, (2) parses the build string from the filename,
+(3) extracts `Kernel.tar.gz` to a scratch dir *outside* the repo, (4) strips the exact same
+non-committable bits `vanilla` already excludes (the GCC prebuilt + dangling `bazel-*` symlinks),
+(5) rebuilds the `vanilla` branch as a fresh pristine commit **in an isolated git worktree** (your
+working checkout is never touched) and tags it `osrc/<BUILD>`. It deliberately does **not** push
+and does **not** touch `main`.
+
+Then replay our work onto the new base (deliberate, never forced — per CLAUDE.md):
+
+1. `git diff osrc/<PREV> osrc/<NEW> -- kernel_platform vendor` — see exactly what Samsung changed.
+2. On a `task/reimport-<BUILD>` branch off `main`, bring in the new `vanilla` content and rebuild
+   via CI (`toolchain=reference`, `lto=thin`).
+3. If one of our changes (a defconfig off-switch, a C patch) no longer applies cleanly, that is
+   **signal** that Samsung moved something — investigate it, don't force the patch through.
+4. Push when satisfied: `git push origin vanilla && git push origin osrc/<BUILD>`.
+
+Values that must be re-read from the new drop (they can change between firmwares): the exact
+`SUBLEVEL` (`common/Makefile`), `CLANG_VERSION` (`build.config.constants` — the toolchain fetch
+pins it), and the KMI `BRANCH`. Update `docs/FACTS.md` accordingly; `setup-toolchain.sh` reads the
+clang id from a constant that must match the new drop.
+
 ---
 
 ## 12. The phase plan and where we are now
@@ -353,7 +394,7 @@ Phases are sequential; each has an **exit gate that requires a real flash on rea
 | Phase | Goal | Exit gate | Status |
 |---|---|---|---|
 | 0 — Discovery | Know the tree with zero assumptions | Owner reads `FACTS.md`; no `TBD` in blocking fields | ✅ **done** |
-| 1 — Reproducible stock build that boots | Compile Samsung source; boot with all hardware working | Device boots; Wi-Fi/BT/data/S-Pen/camera/fingerprint all confirmed | 🔧 **in progress** — kernel **compiles green** (CI run #2). Remaining: LTO→thin, real packaging, owner flash+verify. |
+| 1 — Reproducible stock build that boots | Compile Samsung source; boot with all hardware working | Device boots; Wi-Fi/BT/data/S-Pen/camera/fingerprint all confirmed | 🔧 **in progress** — kernel **compiles green** (CI run #2). Remaining: disable the Samsung boot-blocking protections (moved here from Phase 3 — see §8), LTO→thin, real packaging, owner flash+verify. |
 | 2 — Reproducibility hardening | Deterministic builds; documented flash+rollback | Owner can flash, break, and recover unaided | ⏳ pending |
 | 3 — Protection neutralization + KernelSU Next (LKM) | Boot a modified kernel; load the root LKM | KSU Next shows active + grants root; full hardware checklist still passes | ⏳ pending |
 | 4 — SUSFS | SUSFS on a working KSU Next | SUSFS active; root works; hardware checklist passes | ⏳ pending |
