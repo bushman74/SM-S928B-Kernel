@@ -64,8 +64,17 @@ jobs:
           docker-images: true
           swap-storage: false   # keep swap; Bazel link steps are memory-hungry
 
-      - name: Report starting disk
-        run: df -h /
+      - name: Report starting disk and assert headroom
+        run: |
+          df -h /
+          # A source checkout (~3.5 GB) + prebuilts (~6 GB) + a Kleaf build need tens of GB.
+          # Fail here, before the fetch/compile, if the free-disk step didn't reclaim enough.
+          avail_gb=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "Free on /: ${avail_gb} GB"
+          if [ "${avail_gb:-0}" -lt 40 ]; then
+            echo "::error::Only ${avail_gb} GB free — need ~40+ GB for source + prebuilts + build. Aborting before the fetch."
+            exit 1
+          fi
 
       - uses: actions/checkout@v4
         with:
