@@ -78,6 +78,12 @@ shallow_clone "kernel/prebuilts/build-tools"          "kernel-build-tools"
 shallow_clone "platform/prebuilts/bazel/linux-x86_64" "bazel/linux-x86_64"
 shallow_clone "platform/prebuilts/jdk/jdk11"          "jdk/jdk11"
 shallow_clone "toolchain/prebuilts/ndk/r23"           "ndk-r23"
+# Host glibc sysroot for the hermetic tools. Not referenced in any BUILD file, so easy to
+# miss — the tree reaches it via the symlink build/kernel/build-tools/sysroot ->
+# ../../../prebuilts/gcc/.../sysroot. Without it, //build/kernel's `sysroot` glob is empty
+# and the hermetic_tools_toolchain never registers (first CI failure, run #1).
+shallow_clone "platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" \
+              "gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8"
 
 echo "==> prebuilts populated under $PREBUILTS"
 echo "    clang: $PREBUILTS/clang/host/linux-x86/clang-$CLANG_ID"
