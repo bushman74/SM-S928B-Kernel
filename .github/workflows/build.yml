@@ -10,9 +10,9 @@ on:
         required: true
         default: reference
       lto:
-        description: "LTO mode: none | thin | full"
+        description: "LTO mode: none | thin | full (stock e3q is LTO_NONE — see docs/FACTS.md §0.5)"
         required: true
-        default: thin
+        default: none
         type: choice
         options: [none, thin, full]
       kernelsu:

@@ -9,7 +9,7 @@
 # out/dist/; turning those into flashable images is scripts/package.sh.
 #
 # Env (set by .github/workflows/build.yml):
-#   LTO_MODE   none|thin|full  (default thin)
+#   LTO_MODE   none|thin|full  (default none — stock e3q is built LTO_NONE; see docs/FACTS.md §0.5)
 #   WITH_KERNELSU / WITH_SUSFS consumed in later phases; ignored here
 #   KBUILD_BUILD_TIMESTAMP/USER/HOST  reproducibility, honored by kbuild if exported
 #
@@ -27,7 +27,7 @@ CLANG_ID="r487747c"
 [[ -x "$KP/prebuilts/clang/host/linux-x86/clang-$CLANG_ID/bin/clang" ]] \
   || { echo "ERROR: clang prebuilt missing — run scripts/setup-toolchain.sh first." >&2; exit 1; }
 
-LTO="${LTO_MODE:-thin}"
+LTO="${LTO_MODE:-none}"   # stock e3q builds LTO_NONE (FACTS §0.5); match it for ABI
 OUT_DIR="$ROOT/out/kbuild"
 DIST_DIR="$ROOT/out/dist"
 mkdir -p "$OUT_DIR" "$DIST_DIR"
