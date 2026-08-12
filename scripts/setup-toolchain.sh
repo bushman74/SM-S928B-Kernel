@@ -1,72 +1,83 @@
 #!/usr/bin/env bash
 #
-# Fetch the Clang toolchain used to build this kernel.
+# Populate kernel_platform/prebuilts/ with the toolchain and host tools the Kleaf
+# build needs. The Samsung OSRC drop ships the kernel source but NOT prebuilts/, so
+# without this step the bazel build fails loading //prebuilts/clang/... and friends.
 #
-# STATUS: SKELETON. The reference Clang build id is unknown until Phase 0 discovery
-# fills in docs/FACTS.md §0.5. Do not guess it — a mismatched toolchain silently
-# changes module ABI. This script fails loudly rather than picking something plausible.
+# Ground truth: the AOSP GKI manifest (android.googlesource.com/kernel/manifest,
+# branch common-android14-6.1) pins each prebuilt project at revision
+# main-kernel-build-2023. See docs/FACTS.md §0.5. Nothing here is guessed — the repo
+# names, paths, and revision are read from that manifest.
 #
-# Usage: ./scripts/setup-toolchain.sh <reference|clang-build-id>
+# STATUS: first version. It cannot be exercised in the dev sandbox (no disk/time for a
+# multi-GB fetch + build); the first CI run is its verification. Reference Clang is
+# r487747c (build.config.constants:2) — do not guess it.
+#
+# Usage: scripts/setup-toolchain.sh [reference|<clang-build-id>]
 
 set -euo pipefail
 
-TOOLCHAIN_ARG="${1:-reference}"
-TOOLCHAIN_DIR="${TOOLCHAIN_DIR:-$PWD/toolchain}"
+REFERENCE_CLANG_BUILD_ID="r487747c"          # kernel_platform/common/build.config.constants:2
+MANIFEST_REV="main-kernel-build-2023"        # pinned by the common-android14-6.1 manifest
+GOOGLESOURCE="https://android.googlesource.com"
 
-# Read from Samsung's own build config, not guessed. See docs/FACTS.md §0.5.
-#   kernel_platform/common/build.config.constants:2  ->  CLANG_VERSION=r487747c
-REFERENCE_CLANG_BUILD_ID="r487747c"
+KP="${KP:-$PWD/kernel_platform}"
+PREBUILTS="$KP/prebuilts"
 
-AOSP_CLANG_BASE="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main"
+CLANG_ID="${1:-reference}"
+[[ "$CLANG_ID" == "reference" ]] && CLANG_ID="$REFERENCE_CLANG_BUILD_ID"
 
-if [[ "$TOOLCHAIN_ARG" == "reference" ]]; then
-  if [[ -z "$REFERENCE_CLANG_BUILD_ID" ]]; then
-    cat >&2 <<'EOF'
-ERROR: REFERENCE_CLANG_BUILD_ID is not set.
+[[ -d "$KP" ]] || { echo "ERROR: $KP not found — run from the repo root." >&2; exit 1; }
+mkdir -p "$PREBUILTS"
 
-This is intentional. Phase 0 discovery must determine which Clang Samsung's build
-scripts reference, and record it in docs/FACTS.md §0.5, before any build happens.
+# Retry git over flaky networks: 4 tries, exponential backoff (2/4/8s).
+git_retry() {
+  local n=0
+  until git "$@"; do
+    n=$((n + 1))
+    (( n >= 4 )) && { echo "ERROR: 'git $*' failed after $n attempts." >&2; return 1; }
+    local d=$((2 ** n)); echo "  git failed, retry $n in ${d}s..." >&2; sleep "$d"
+  done
+}
 
-To find it, grep the extracted source archive:
+# shallow_clone <googlesource-repo-name> <dest-under-prebuilts>
+shallow_clone() {
+  local name="$1" dest="$PREBUILTS/$2"
+  if [[ -d "$dest/.git" ]]; then echo "==> prebuilts/$2 present, skipping"; return; fi
+  echo "==> fetching $name @ $MANIFEST_REV -> prebuilts/$2"
+  rm -rf "$dest"; mkdir -p "$(dirname "$dest")"
+  git_retry clone --depth=1 --branch "$MANIFEST_REV" "$GOOGLESOURCE/$name" "$dest"
+}
 
-    grep -rn 'clang-r[0-9]' <extracted>/ | head
-    grep -rn 'prebuilts/clang' <extracted>/ | head
-
-Then set REFERENCE_CLANG_BUILD_ID above to the value you actually saw.
-EOF
-    exit 1
+# Clang lives in one enormous repo (every version). Fetch only clang-$CLANG_ID and the
+# kleaf/ registration via a blobless sparse checkout instead of the ~40 GB full tree.
+fetch_clang() {
+  local dest="$PREBUILTS/clang/host/linux-x86"
+  if [[ -x "$dest/clang-$CLANG_ID/bin/clang" ]]; then
+    echo "==> clang-$CLANG_ID present, skipping"; return
   fi
-  CLANG_BUILD_ID="$REFERENCE_CLANG_BUILD_ID"
-else
-  CLANG_BUILD_ID="$TOOLCHAIN_ARG"
-fi
+  echo "==> fetching clang-$CLANG_ID + kleaf registration (sparse) @ $MANIFEST_REV"
+  rm -rf "$dest"; mkdir -p "$(dirname "$dest")"
+  git_retry clone --filter=blob:none --no-checkout --depth=1 --branch "$MANIFEST_REV" \
+    "$GOOGLESOURCE/platform/prebuilts/clang/host/linux-x86" "$dest"
+  git -C "$dest" sparse-checkout init --cone
+  git -C "$dest" sparse-checkout set "clang-$CLANG_ID" kleaf
+  git_retry -C "$dest" checkout
+  [[ -x "$dest/clang-$CLANG_ID/bin/clang" ]] || {
+    echo "ERROR: clang-$CLANG_ID is not in the $MANIFEST_REV tree." >&2; exit 1; }
+  "$dest/clang-$CLANG_ID/bin/clang" --version
+  if [[ -f "$dest/kleaf/versions.bzl" ]] && ! grep -q "$CLANG_ID" "$dest/kleaf/versions.bzl"; then
+    echo "WARN: $CLANG_ID absent from kleaf/versions.bzl — bazel may not register it." >&2
+  fi
+}
 
-echo "==> Toolchain: clang-${CLANG_BUILD_ID}"
-mkdir -p "$TOOLCHAIN_DIR"
+fetch_clang
+shallow_clone "platform/prebuilts/build-tools"        "build-tools"
+shallow_clone "platform/prebuilts/clang-tools"        "clang-tools"
+shallow_clone "kernel/prebuilts/build-tools"          "kernel-build-tools"
+shallow_clone "platform/prebuilts/bazel/linux-x86_64" "bazel/linux-x86_64"
+shallow_clone "platform/prebuilts/jdk/jdk11"          "jdk/jdk11"
+shallow_clone "toolchain/prebuilts/ndk/r23"           "ndk-r23"
 
-if [[ -x "$TOOLCHAIN_DIR/clang-${CLANG_BUILD_ID}/bin/clang" ]]; then
-  echo "==> Already present, skipping download."
-else
-  echo "==> Downloading..."
-  # NOTE: many Samsung/Qualcomm trees vendor their own toolchain under
-  # kernel_platform/prebuilts/. If Phase 0 finds one there, prefer it over
-  # downloading — it is guaranteed to be the version the tree was tested with.
-  # Record which path we took in docs/DECISIONS.md.
-  mkdir -p "$TOOLCHAIN_DIR/clang-${CLANG_BUILD_ID}"
-  curl -fsSL "${AOSP_CLANG_BASE}/clang-${CLANG_BUILD_ID}.tar.gz" \
-    | tar -xz -C "$TOOLCHAIN_DIR/clang-${CLANG_BUILD_ID}"
-fi
-
-"$TOOLCHAIN_DIR/clang-${CLANG_BUILD_ID}/bin/clang" --version
-
-# CLANG_PATH goes in the env file; the PATH prepend MUST go in GITHUB_PATH.
-# Writing PATH= into GITHUB_ENV clobbers the runner's PATH for every later step
-# and breaks tools installed by earlier steps.
-if [[ -n "${GITHUB_ENV:-}" ]]; then
-  echo "CLANG_PATH=$TOOLCHAIN_DIR/clang-${CLANG_BUILD_ID}/bin" >> "$GITHUB_ENV"
-fi
-if [[ -n "${GITHUB_PATH:-}" ]]; then
-  echo "$TOOLCHAIN_DIR/clang-${CLANG_BUILD_ID}/bin" >> "$GITHUB_PATH"
-fi
-
-echo "==> Toolchain ready."
+echo "==> prebuilts populated under $PREBUILTS"
+echo "    clang: $PREBUILTS/clang/host/linux-x86/clang-$CLANG_ID"
