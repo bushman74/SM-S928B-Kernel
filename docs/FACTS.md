@@ -180,6 +180,28 @@ build).
 | `CONFIG_KPROBES` / `HAVE_KPROBES` / `KPROBE_EVENTS` | **`KPROBES=y`** already (`common/gki_defconfig:96`). `HAVE_KPROBES` is arch-selected (`common/arch/arm64/Kconfig:213 select HAVE_KPROBES`). `KPROBE_EVENTS` not in defconfig (tracing-only, not required for KSU LKM hooks). ✅ **No kprobes-enablement patch needed** — the LKM's hooking prerequisite is satisfied out of the box. *(blocking — resolved)* |
 | `CONFIG_WERROR` | Not found in `gki_defconfig` (may be applied via build flag). Non-blocking. |
 
+### Build prerequisites the OSRC drop does NOT ship (Phase 1 blocker to solve)
+
+The Samsung drop contains **no `kernel_platform/prebuilts/` directory**, but the Kleaf build loads its
+toolchain and host tools from bazel packages under `//prebuilts/…`. So the source is **not self-contained**;
+CI must reconstruct the android14-6.1 kernel `prebuilts/` set before it can build. Referenced projects (from
+`grep -oE '//prebuilts/…'` over `build/` and `msm-kernel/`):
+
+| Bazel path | Purpose | Refs |
+|---|---|---|
+| `//prebuilts/clang/host/linux-x86` | Clang `r487747c` **+ the `kleaf/` registration** (`register.bzl`, `versions.bzl`) that `build/kernel/kleaf/workspace.bzl:27` loads | 9 |
+| `//prebuilts/kernel-build-tools` | mkbootimg/avbtool/lz4/etc. host tools | 15 |
+| `//prebuilts/build-tools` | general host build tools + `py_toolchain` | 10 |
+| `//prebuilts/clang-tools` | `bindgen` (`kernel_env.bzl:457`) | 1 |
+| `//prebuilts/rust/linux-x86` | Rust toolchain | 1 |
+| `//prebuilts/bazel`, `//prebuilts/jdk/jdk11/linux-x86` | bazel `remote_java_tools`, JDK11 (`workspace.bzl:120-135`) | — |
+
+**Ground truth for exact projects + pinned revisions = the AOSP kernel manifest for `android14-6.1`**
+(`android.googlesource.com/kernel/manifest`, branch `android14-6.1`) — *not* to be guessed per-path. `README_Kernel.txt`
+points the same way ("get the toolchain … decompress in `kernel_platform/prebuilts`"). **Consequence:**
+`scripts/setup-toolchain.sh` must fetch this whole prebuilts set into `kernel_platform/prebuilts/`, not just a
+single clang tarball. This is the main open task before CI can produce a `boot.img`.
+
 ## 0.6 Boot images, ramdisk & verified boot *(blocking — resolved)*
 
 | Field | Value |
