@@ -22,6 +22,16 @@ if ! ls "$DIST"/Image* >/dev/null 2>&1; then
   exit 1
 fi
 
+# Sanity — refuse to package an obviously broken/partial build.
+_nmods="$(find "$DIST" -maxdepth 1 -name '*.ko' | wc -l)"
+(( _nmods > 0 )) || { echo "ERROR: no .ko modules staged in $DIST — a kernel with no modules is not usable." >&2; exit 1; }
+_empty="$(find "$DIST" -maxdepth 1 -type f -empty ! -name '*.zip' 2>/dev/null)"
+if [[ -n "$_empty" ]]; then
+  echo "WARN: zero-byte artifact(s) present — build may be incomplete:" >&2
+  echo "$_empty" >&2
+fi
+echo "==> packaging Image + $_nmods modules"
+
 STAMP="$(date -u +%Y%m%d)"
 ZIP="e3q-kernel-${STAMP}.zip"
 
