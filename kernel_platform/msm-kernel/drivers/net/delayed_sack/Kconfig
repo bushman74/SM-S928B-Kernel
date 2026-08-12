@@ -1,0 +1,14 @@
+#
+# net: delayed-sack
+#
+
+comment "Enable Delayed-SACK to manipulate TCP Selective-ACK"
+
+config DELAYED_SACK
+	tristate "improving network download throughput"
+	help
+	  This feature provides an DL tput improvement by delaying the SACKs until a
+	  certain threshold is reached. This helps in reducing the number of SACKs
+	  sent and hence reduces the overhead.
+
+	  To compile this driver as a module, choose M here.
