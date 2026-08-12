@@ -207,3 +207,36 @@ protects. So a *deliberate, isolated, revertible* experiment with a newer clang 
 and is verified. It would be its own phase with before/after measurements, not a silent swap.
 (AutoFDO, the other compiler-driven optimization, was already evaluated and dropped — see
 2026-08-11.)
+
+---
+
+## 2026-08-12 — Branch model settled: pristine `vanilla` + `main` for work + task branches
+
+**Refines the 2026-08-11 branch-model decision** (which stated "no per-feature branches"), at the
+owner's explicit choice among presented options.
+
+**Decided:**
+- **`vanilla`** — import-only; pristine Samsung source drops, one per firmware, tagged
+  (`osrc/S928BXXU5DZDP`). Nothing of ours ever lands here. Created 2026-08-12 as an orphan branch
+  holding exactly `kernel_platform/` + `vendor/` + `build_kernel_GKI.sh` (minus the excluded GCC
+  prebuilt and dangling bazel symlinks, per the no-toolchains rule).
+- **`main`** — `vanilla` content + everything of ours (scaffolding, docs, scripts, CI, and the
+  eventual patch series). **This is what CI builds.**
+- **Task branches** — each unit of work on its own short-lived `task/<name>` branch → PR → merge
+  into `main`. This supersedes "no per-feature branches"; that earlier rule was about build
+  *variants* (toolchain/LTO/KernelSU/SUSFS), which remain **workflow inputs**, not branches.
+
+**Why:** keeps "vanilla" meaning *unmodified*, so re-importing a future Samsung firmware drop is
+mechanical — import onto `vanilla`, replay `main`'s series, and fail loudly if a patch no longer
+applies. That re-import workflow is the core reason the project is structured this way. Per-task
+branches also give the granular, independently reviewable/revertible units the "quantise commits"
+rule wants.
+
+**Note on existing history:** `main` was **not** rebased onto `vanilla` retroactively. `main`'s
+current history already contains the source import interleaved with our scaffolding (a consequence
+of how the repo was bootstrapped under an initial single-branch constraint), and rewriting shared,
+already-merged history is not worth the risk. `vanilla` therefore stands as the pristine
+reference/base for *future* re-imports rather than a literal git ancestor of today's `main`.
+
+**Would change our mind:** if the patch series grows unwieldy (hundreds of patches), a merge-based
+topic-branch model as noted in the 2026-08-11 entry.
