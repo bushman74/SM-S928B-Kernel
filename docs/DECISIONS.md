@@ -240,3 +240,38 @@ reference/base for *future* re-imports rather than a literal git ancestor of tod
 
 **Would change our mind:** if the patch series grows unwieldy (hundreds of patches), a merge-based
 topic-branch model as noted in the 2026-08-11 entry.
+
+---
+
+## 2026-08-12 — Samsung boot-blocking protections are disabled in Phase 1, not Phase 3
+
+**Corrects the original phase split** (which put all protection neutralization in Phase 3
+alongside KernelSU), based on the owner's knowledge of their device.
+
+**Decided:** disabling the Samsung protections that block a *self-built* kernel from booting
+(UH/RKP/KDP, DEFEX, PROCA, FIVE) is part of Phase 1 — "the minimum required to boot a self-built
+kernel" — and happens **before** any KernelSU Next / SUSFS work, even for a plain no-root test
+build.
+
+**Why:** the device runs an unlocked bootloader + custom ROM (BeyondROM). Its working kernel
+already has these detectors disabled; a build from *raw* Samsung source re-enables them by
+default, and on a modified/rooted system they trip at boot (uH/RKP integrity enforcement,
+DEFEX/PROCA/FIVE integrity checks) → bootloop. Owner-confirmed: a raw-unmodified self-built
+kernel simply will not boot here. So there is no useful "unmodified boots" baseline to test; the
+first flashable build already has these off.
+
+**How:** each protection is its own commit (bisectability), at the defconfig level where
+possible (`FACTS §0.4` shows none are force-selected, so defconfig off-switches suffice as the
+first approach). If a bootloop remains after disabling all of them, bisect by re-enabling one at
+a time.
+
+**Consequence for Phase 3:** Phase 3 no longer re-does protection neutralization; it covers only
+the KernelSU-LKM-specific pieces (kprobes are already on; verify `MODULE_SIG_PROTECT` doesn't
+reject the unsigned `.ko`; inject the LKM into `init_boot`).
+
+**Cannot be pre-verified (no device):** which exact subset is strictly necessary to boot is
+unknown until flashed; we disable all six and let the first flash confirm. Standard practice for
+Samsung custom kernels aligns with the owner's assessment.
+
+**Would change our mind:** the first flash shows some protection can stay on without blocking
+boot — then re-enable it (smaller blast radius is better) and record which.
