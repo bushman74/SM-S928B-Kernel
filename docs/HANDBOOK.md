@@ -323,18 +323,25 @@ Node-24-native releases.
 
 ## 11. Branch and pull-request model
 
-> This section reflects the **current** state of the repo. The long-term branch model is being
-> settled with the owner; the chosen model will be recorded in `DECISIONS.md` and this section
-> updated to match, so it always mirrors reality.
+Settled model (`DECISIONS.md 2026-08-12`):
 
-Current state: a single mainline branch **`main`** holds the integration history (the Samsung
-import + our changes). Work is done on the development branch
-`claude/s24-ultra-kernel-build-joy4sh`, opened as a pull request against `main`, and merged. Each
-merged unit is its own PR (#1 Phase-0 + source import, #2 prebuilts fetch, #3 build scripts,
-#4 gcc-sysroot fix). Commits follow the granularity and detail rules in `CLAUDE.md`.
+- **`vanilla`** — import-only. Pristine Samsung source drops, one per firmware, tagged
+  (`osrc/S928BXXU5DZDP`). Nothing of ours lands here. Created 2026-08-12 as an orphan branch of
+  exactly `kernel_platform/` + `vendor/` + `build_kernel_GKI.sh`. Its purpose is to make
+  re-importing a *future* Samsung drop mechanical: import onto `vanilla`, replay our series onto it,
+  fail loudly on conflict.
+- **`main`** — `vanilla` content + everything of ours (scaffolding, docs, scripts, CI, patches).
+  **This is the branch CI builds.**
+- **Task branches** — each unit of work on its own short-lived `task/<name>` branch → PR → merge
+  into `main`. Build *variants* (toolchain, LTO, KernelSU on/off, SUSFS on/off) are **workflow
+  inputs**, not branches.
 
-`main` is what CI builds. Build variants (toolchain, LTO, KernelSU on/off, SUSFS on/off) are
-**workflow inputs**, not branches.
+Merged PRs so far, all into `main`: #1 (Phase-0 + source import), #2 (prebuilts fetch), #3 (build
+scripts), #4 (gcc-sysroot fix), #5 (docs: granularity/detail rules, compiler clarification, this
+handbook). Commits follow the granularity and detail rules in `CLAUDE.md`.
+
+Historical note: `main` was not rebased onto `vanilla` (its history predates the split); `vanilla`
+is the pristine base for future re-imports, not a literal ancestor of today's `main`.
 
 ---
 
