@@ -168,14 +168,20 @@ jobs:
         if: always()
         run: df -h /
 
+      # Upload ONLY the files the owner should actually flash, plus the modules zip for
+      # reference. Deliberately NOT `out/dist/*.img`: build.sh stages many images
+      # (vendor_boot.img, vendor_dlkm.img ~282 MB, system_dlkm*.img, dtb/dtbo) that are build
+      # byproducts and must not be flashed for the boot.img-only first-boot test — shipping them
+      # in the artifact is a footgun and bloats it. See docs/FLASHING.md.
       - name: Upload flashable artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: e3q-kernel-${{ github.sha }}
           path: |
-            out/dist/*.zip
-            out/dist/*.img
+            out/dist/boot.img
+            out/dist/boot.tar.md5
+            out/dist/e3q-modules-*.zip
           retention-days: 30
           if-no-files-found: error
 
