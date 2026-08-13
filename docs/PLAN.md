@@ -51,8 +51,11 @@ minimum required to make a *self-built* kernel boot on **this** device.
       none are force-selected). Granular commits so a bootloop can be bisected to one protection.
       *(done: PR #9, one commit per protection; CI build #3 extracts the built kernel's config
       and confirms all six are `off` — see `build.sh` verification step.)*
-- [ ] `scripts/package.sh` — repack to a flashable `boot.img` (+ SEANDROIDENFORCE / vbmeta
+- [x] `scripts/package.sh` — repack to a flashable `boot.img` (+ SEANDROIDENFORCE / vbmeta
       handling as needed). Simplest first flash: our `boot.img` only, keeping stock modules.
+      *(done: mkbootimg header-v4 + SEANDROIDENFORCE; sandbox-verified byte-identical to the
+      stock boot.img through the footer. The CI-produced artifact from a fresh build is the
+      next trigger — build #4.)*
 - [x] `.github/workflows/build.yml` green (manual trigger)
 - [ ] Owner flashes the result
 
