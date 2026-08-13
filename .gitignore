@@ -29,6 +29,13 @@
 *.tgz
 *.zst
 
+# Python bytecode from the in-tree tools we invoke (e.g. tools/mkbootimg/mkbootimg.py,
+# run by scripts/package.sh). These caches are generated, never part of a Samsung source
+# drop, so ignoring them keeps the vanilla import faithful and the tree clean after a
+# local package run.
+__pycache__/
+*.pyc
+
 # Editor / OS cruft
 *.swp
 *~
