@@ -230,11 +230,21 @@ optional. The workflow caches `kernel_platform/prebuilts/` so the ~6 GB fetch is
 |---|---|
 | Separate `init_boot` partition? | **YES** — `BOOT_IMAGE_HEADER_VERSION=4` (`msm-kernel/build.config.msm.pineapple:13`). Boot header v4 moves the generic ramdisk out of `boot` into `init_boot`. *(blocking — resolved from source; device confirmation trivial)* |
 | Where the generic ramdisk lives | **`init_boot`** (header v4). `boot.img` = kernel only; vendor ramdisk lives in `vendor_boot`. Matches the CLAUDE.md partition table. *(blocking — resolved)* |
-| Ramdisk compression | Kleaf default **`lz4`** (`build/kernel/_setup_env.sh:287-289`: `RAMDISK_COMPRESS="lz4 -c -l …"`, `RAMDISK_EXT="lz4"`; gzip is the alternate branch). This is the "lz4_legacy" magiskboot must match. **Confirm against the stock `init_boot` by unpacking it device-side** (see OWNER ACTION §0.7). |
-| SEANDROIDENFORCE footer present on stock images? | **Not represented in kernel source** (grep across `kernel_platform/` = empty) — it is appended by Samsung's packaging tooling, so it must be re-appended after any repack (Category B). Presence on the stock `init_boot`/`boot` to confirm by unpacking device-side. |
+| Ramdisk compression | **`lz4`** — CONFIRMED by parsing the owner's stock `init_boot.img`: its ramdisk (at page 1) starts with the lz4 legacy magic `02 21 4c 18`. Repack tooling for `init_boot` (Phase 3) must use lz4. |
+| SEANDROIDENFORCE footer present on stock images? | **`boot.img`: YES** — the literal `SEANDROIDENFORCE` string is appended right after the kernel (at byte 38,010,880 of the owner's stock `boot.img`). **`init_boot.img` / `vendor_boot.img`: NO.** So our repacked `boot.img` **must** re-append `SEANDROIDENFORCE`; our repacked `init_boot` (Phase 3) does not need it. Not in kernel source (a packaging/Category-B step). |
 | vbmeta / AVB: what must be disabled to boot a modified image | Source signs `boot.img` via `avbtool add_hash_footer --algorithm SHA256_RSA4096 --partition_name boot` (`msm-kernel/avb_boot_img.bzl`). **Owner-confirmed: the current ROM already ships a patched/disabled vbmeta**, so a self-built `boot`+`init_boot` boots without an extra AVB step — *provided a stock `vbmeta` is never re-flashed over it*. `scripts/package.sh`/`FLASHING.md` will still emit the `--disable-verity --disable-verification` vbmeta guidance as the safety net. *(resolved)* |
 | Does the current custom ROM already disable verity/verification? | **YES** — BeyondROM 5.0 (DZDP) ships with vbmeta already patched (owner-confirmed). *(resolved)* |
 | KMI / Android version string | **`android14-6.1`** (`common/build.config.constants:1` and `msm-kernel/build.config.constants:1`, `BRANCH=android14-6.1`). This is the SUSFS branch key → target `susfs4ksu` branch `gki-android14-6.1`. (Platform is Android 16, but the KMI generation is android14-6.1.) *(needed for SUSFS branch match — resolved)* |
+
+**Our `boot.img` rebuild recipe (from parsing the owner's stock images, `BeyondROM_images/`):** the stock
+`boot.img` is header **v4**, kernel-only (`ramdisk_size=0`), `os_version 14.0.0`, `os_patch_level 2026-04`,
+empty cmdline; the real kernel cmdline lives in `vendor_boot.img`
+(`video=vfb:… printk.devkmsg=on firmware_class.path=/vendor/firmware_mnt/image bootconfig loop.max_part=7`),
+which we keep stock. So `scripts/package.sh` builds our boot image as
+`mkbootimg --header_version 4 --os_version 14.0.0 --os_patch_level 2026-04 --kernel <our Image> -o boot.img`
+then appends the `SEANDROIDENFORCE` footer. **No stock `boot.img` is needed in CI** — these header values are
+the only inputs, and they are recorded here. (`init_boot.img` = kernel-less, lz4 ramdisk ~1.44 MB carrying the
+generic ramdisk + the owner's Magisk, which is where KernelSU's LKM goes in Phase 3.)
 
 ## 0.7 Device / flashing environment *(owner-supplied)*
 
