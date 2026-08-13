@@ -246,6 +246,22 @@ then appends the `SEANDROIDENFORCE` footer. **No stock `boot.img` is needed in C
 the only inputs, and they are recorded here. (`init_boot.img` = kernel-less, lz4 ramdisk ~1.44 MB carrying the
 generic ramdisk + the owner's Magisk, which is where KernelSU's LKM goes in Phase 3.)
 
+**Full stock `boot.img` trailer, and why we reproduce only the first part.** Parsing the whole stock
+partition (not just the SEANDROIDENFORCE offset) shows three appended blocks after the page-aligned kernel:
+
+| Offset | Block | Size | We reproduce it? |
+|---|---|---|---|
+| `38,010,880` | `SEANDROIDENFORCE` | 16 B | **Yes** — SELinux-enforce marker the bootloader reads right after the kernel. `package.sh` appends it. |
+| `38,010,896` | **Samsung `SignerVer02`** | 512 B | **No.** Samsung's own signed footer — ASCII header `SignerVer02` + build metadata (`S928BXXU5DZDP`, `SM-S928B_EUR_XX_QKEY2`, `SRPWG28B005`, `boot.img`, timestamp `20260423172902`) followed by an RSA signature. We do **not** have Samsung's private key, so this is **not reproducible**, and on an **unlocked** bootloader it is **not verified**. |
+| `38,014,976` | **AVB** (`AVB0` vbmeta + `AVBf` footer at partition end) | 2112 B + 64 B | **No.** Android Verified Boot metadata; not checked because the ROM's `vbmeta` is patched (`--disable-verification`). |
+
+So our repacked `boot.img` is **byte-for-byte identical to stock through the SEANDROIDENFORCE footer**
+(38,010,896 B — verified by reconstructing it from the stock kernel and diffing) and deliberately omits the
+Samsung signature and the AVB footer. **Precedent this device already gives us:** the owner's Magisk-patched
+`init_boot` carries no valid Samsung signature and boots — direct evidence that this unlocked, patched-vbmeta
+device boots images lacking Samsung's `SignerVer02`. Not a guarantee our `boot.img` boots (only a flash proves
+that), but the mechanism is established, not assumed.
+
 ## 0.7 Device / flashing environment *(owner-supplied)*
 
 | Field | Value |

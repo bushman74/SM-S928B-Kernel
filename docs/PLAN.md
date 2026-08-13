@@ -46,11 +46,16 @@ minimum required to make a *self-built* kernel boot on **this** device.
 - [x] Import the archive to `vanilla`; tag `osrc/<build-string>` (done: `osrc/S928BXXU5DZDP`)
 - [x] `scripts/setup-toolchain.sh` — fetch the reference Clang + prebuilts (green in CI)
 - [x] `scripts/build.sh` — the single canonical build invocation (compiles, CI run #2)
-- [ ] **Disable the Samsung boot-blocking protections — UH/RKP/KDP, DEFEX, PROCA, FIVE —
+- [x] **Disable the Samsung boot-blocking protections — UH/RKP/KDP, DEFEX, PROCA, FIVE —
       one per commit**, at the defconfig level where possible (symbols/evidence: `FACTS §0.4`,
       none are force-selected). Granular commits so a bootloop can be bisected to one protection.
-- [ ] `scripts/package.sh` — repack to a flashable `boot.img` (+ SEANDROIDENFORCE / vbmeta
+      *(done: PR #9, one commit per protection; CI build #3 extracts the built kernel's config
+      and confirms all six are `off` — see `build.sh` verification step.)*
+- [x] `scripts/package.sh` — repack to a flashable `boot.img` (+ SEANDROIDENFORCE / vbmeta
       handling as needed). Simplest first flash: our `boot.img` only, keeping stock modules.
+      *(done: mkbootimg header-v4 + SEANDROIDENFORCE; sandbox-verified byte-identical to the
+      stock boot.img through the footer. The CI-produced artifact from a fresh build is the
+      next trigger — build #4.)*
 - [x] `.github/workflows/build.yml` green (manual trigger)
 - [ ] Owner flashes the result
 
