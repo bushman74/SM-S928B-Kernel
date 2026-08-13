@@ -829,12 +829,12 @@ CONFIG_PROC_AVC=y
 
 
 
-CONFIG_FIVE=y
+# CONFIG_FIVE is not set
 
 
 
 
-CONFIG_PROCA=y
+# CONFIG_PROCA is not set
 
 
 
@@ -946,7 +946,10 @@ CONFIG_GAF_V6=y
 
 
 
-CONFIG_SECURITY_DEFEX=y
+# CONFIG_UH is not set
+# CONFIG_RKP is not set
+# CONFIG_KDP is not set
+# CONFIG_SECURITY_DEFEX is not set
 
 
 

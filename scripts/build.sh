@@ -94,3 +94,26 @@ echo "==> Result: Image=${_img:-NONE}  modules=$_nmods"
 if (( _nmods < 100 )); then
   echo "WARN: only $_nmods modules staged (pineapple gki normally builds ~300+). Possible partial build or config regression — check the log before trusting this artifact." >&2
 fi
+
+# --- Verify the Samsung protections we disable in source are actually OFF in the BUILT
+#     kernel. This catches a defconfig edit that never reached the final config (e.g. the
+#     wrong config file, or a fragment re-enabling it). Stock keeps CONFIG_IKCONFIG=y, so the
+#     config is embedded in the Image and extractable. ---
+_ikc="$KP/common/scripts/extract-ikconfig"
+if [[ -f "$_ikc" ]]; then
+  _builtcfg="$ROOT/out/built.config"
+  if bash "$_ikc" "$_img" >"$_builtcfg" 2>/dev/null && [[ -s "$_builtcfg" ]]; then
+    echo "==> Samsung protections in the BUILT kernel (expect all off):"
+    _pfail=0
+    for _s in UH RKP KDP SECURITY_DEFEX PROCA FIVE; do
+      if grep -q "^CONFIG_${_s}=y" "$_builtcfg"; then
+        echo "  STILL ON: CONFIG_${_s}=y" >&2; _pfail=1
+      else
+        echo "  off: CONFIG_${_s}"
+      fi
+    done
+    (( _pfail == 0 )) || { echo "ERROR: a Samsung protection is still enabled in the built kernel — the defconfig disable did not take effect (wrong config file / a fragment re-enables it)." >&2; exit 1; }
+  else
+    echo "WARN: could not extract the config from the Image (IKCONFIG off?); skipping protection verification." >&2
+  fi
+fi
