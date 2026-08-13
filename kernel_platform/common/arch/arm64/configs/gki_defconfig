@@ -829,7 +829,7 @@ CONFIG_PROC_AVC=y
 
 
 
-CONFIG_FIVE=y
+# CONFIG_FIVE is not set
 
 
 
