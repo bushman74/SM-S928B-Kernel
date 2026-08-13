@@ -946,6 +946,9 @@ CONFIG_GAF_V6=y
 
 
 
+# CONFIG_UH is not set
+# CONFIG_RKP is not set
+# CONFIG_KDP is not set
 CONFIG_SECURITY_DEFEX=y
 
 
