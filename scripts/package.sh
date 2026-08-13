@@ -150,6 +150,45 @@ print(f"    OK: header v{header_version}, kernel-only, os {got_osv} / {got_osp},
       f"empty cmdline, SEANDROIDENFORCE @ {end}, total {len(d)} bytes")
 PY
 
+# --- Odin-flashable wrapper. This is a Samsung device; the owner flashes with Odin, which
+#     takes a .tar (AP slot), not a raw .img. Produce the standard Samsung `.tar.md5`: a ustar
+#     tar containing boot.img, with an md5 checksum line appended and the file renamed to
+#     .tar.md5 (exactly the format Odin/Heimdall and Samsung firmware use). The raw boot.img is
+#     also kept for the root-`dd`/Heimdall path. See docs/FLASHING.md. ---
+echo "==> Wrapping boot.img as an Odin-flashable boot.tar.md5"
+BOOTTAR="$DIST/boot.tar.md5"
+(
+  cd "$DIST"
+  rm -f boot.tar boot.tar.md5
+  # -H ustar: the POSIX/ustar format Odin expects; archive holds just boot.img at the root.
+  tar -H ustar -cf boot.tar boot.img
+  # Samsung .tar.md5 = the tar with "<md5>  boot.tar" appended, then renamed. Compute first
+  # into a variable to avoid reading and appending the same file in one redirection.
+  _md5line="$(md5sum boot.tar)"
+  printf '%s\n' "$_md5line" >> boot.tar
+  mv -f boot.tar boot.tar.md5
+)
+# Verify the wrapper: it must contain exactly boot.img and carry the trailing md5 line.
+if ! tar -tf "$BOOTTAR" 2>/dev/null | grep -qx 'boot.img'; then
+  echo "ERROR: $BOOTTAR does not contain boot.img — Odin wrapper is malformed." >&2
+  exit 1
+fi
+python3 - "$BOOTTAR" <<'PY'
+import sys, re, hashlib
+d = open(sys.argv[1], 'rb').read()
+# The Samsung .tar.md5 ends with the appended "<32 hex>  <name>\n" line. A tar is binary with
+# NUL padding, so anchor the search at end-of-file rather than splitting on newlines.
+m = re.search(rb'([0-9a-f]{32})  boot\.tar\n?$', d)
+if not m:
+    sys.exit(f"ERROR: {sys.argv[1]} has no valid trailing md5 line (Odin would reject it).")
+tar_body = d[:m.start()]
+want = m.group(1).decode()
+got = hashlib.md5(tar_body).hexdigest()
+if got != want:
+    sys.exit(f"ERROR: {sys.argv[1]} md5 line ({want}) does not match the tar body ({got}).")
+print(f"    Odin wrapper OK: boot.tar.md5 ({len(d)} bytes), md5 {want} verified against tar body")
+PY
+
 # --- Secondary artifact: the modules built against THIS kernel, for a later vendor_dlkm
 #     rebuild or inspection. Not needed for the boot.img-only first flash, but cheap to keep. ---
 _nmods="$(find "$DIST" -maxdepth 1 -name '*.ko' | wc -l)"
@@ -165,12 +204,14 @@ else
 fi
 
 echo
-echo "==> Flashable artifact: $BOOT"
-ls -la "$BOOT"
+echo "==> Flashable artifacts:"
+ls -la "$BOOT" "$BOOTTAR"
 echo
-echo "First-boot flash plan (details in docs/FLASHING.md, Phase 2):"
-echo "  * Flash boot.img ONLY. Leave init_boot (Magisk), vendor_boot, and vendor_dlkm (stock"
-echo "    modules) untouched — this kernel keeps the android14-6.1 KMI, so stock modules load."
+echo "First-boot flash plan (full procedure: docs/FLASHING.md):"
+echo "  * Flash the KERNEL ONLY: Odin -> AP -> boot.tar.md5 (or 'dd' the raw boot.img)."
+echo "    Do NOT flash vendor_boot.img / vendor_dlkm.img / system_dlkm* — build byproducts."
+echo "  * Leave init_boot (Magisk), vendor_boot, and vendor_dlkm (stock modules) untouched —"
+echo "    this kernel keeps the android14-6.1 KMI, so stock modules load."
 echo "  * Rollback = re-flash your backed-up stock boot.img. Nothing else was changed."
 echo "  * vbmeta safety net: the ROM already ships a patched vbmeta, so no AVB step is needed."
 echo "    If a bootloader ever rejects the image, flash a vbmeta patched with"
