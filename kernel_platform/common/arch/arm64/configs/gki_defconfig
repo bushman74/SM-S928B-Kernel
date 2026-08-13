@@ -834,7 +834,7 @@ CONFIG_FIVE=y
 
 
 
-CONFIG_PROCA=y
+# CONFIG_PROCA is not set
 
 
 
