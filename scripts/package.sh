@@ -1,44 +1,178 @@
 #!/usr/bin/env bash
 #
-# Package the build output.
+# Package the build output into a flashable boot.img (Phase 1 first-boot artifact).
 #
-# FIRST VERSION — bundles the compiled kernel + modules into a zip so CI has an
-# uploadable artifact and we can inspect the real dist layout from a green run. The
-# actual flashable repack (boot.img / init_boot.img / vendor_dlkm, SEANDROIDENFORCE
-# footer, vbmeta guidance, AnyKernel3) is written once the first compile succeeds and we
-# know the artifact set — see docs/PLAN.md Phase 1 and the e3q-kernel skill. Category-B
-# steps (SEANDROIDENFORCE, vbmeta, lz4 ramdisk) live here, not in the kernel source.
+# What this produces, and why:
+#   The Phase 1 goal is to boot a *self-built* GKI kernel on this device with the least
+#   possible risk and a trivial rollback. On an init_boot device (boot header v4) the
+#   boot partition is KERNEL ONLY — the generic ramdisk lives in init_boot, the vendor
+#   ramdisk + real kernel cmdline live in vendor_boot (docs/FACTS.md §0.6). So the only
+#   thing our build changes is the kernel Image, and the only image we need to repack and
+#   flash for a first boot is boot.img. init_boot (Magisk / later KernelSU), vendor_boot,
+#   and vendor_dlkm (stock modules) are left untouched on the device.
 #
-# Env: WITH_KERNELSU / WITH_SUSFS are consumed by later phases; ignored in this version.
+#   We rebuild boot.img from scratch with mkbootimg rather than reusing whatever the Kleaf
+#   `gki` target emits, so the header fields and the SEANDROIDENFORCE footer are guaranteed
+#   to match the stock partition exactly (values parsed from the owner's stock boot.img and
+#   recorded in FACTS §0.6), instead of depending on Kleaf's build-time defaults.
+#
+# Boot image recipe — every value here is transcribed from docs/FACTS.md §0.6, which was
+# derived by parsing the owner's real stock boot.img (BeyondROM_images/boot.img):
+#   header_version 4 · kernel-only (ramdisk_size=0) · os_version 14.0.0 ·
+#   os_patch_level 2026-04 · empty cmdline · SEANDROIDENFORCE appended after the kernel.
+# The stock kernel payload is an UNCOMPRESSED arm64 Image (starts with the "MZ" EFI magic),
+# so we feed out/dist/Image, not a compressed variant — matching the stock structure.
+#
+# Category-B packaging steps (SEANDROIDENFORCE footer, vbmeta guidance) live here, never in
+# the kernel source. AVB: the owner's ROM already ships a patched/disabled vbmeta
+# (FACTS §0.6), so an unsigned boot.img boots as-is; we do NOT add an AVB hash footer (we
+# have no signing key and none is needed). The --disable-verity/--disable-verification
+# vbmeta guidance is printed below as a safety net and detailed in docs/FLASHING.md (Phase 2).
+#
+# Env:
+#   WITH_KERNELSU / WITH_SUSFS  consumed in later phases (Phase 3/4); acknowledged, not used here.
+#
+# STATUS: first real version. Cannot be exercised in the dev sandbox (no build output here);
+# the CI run that follows scripts/build.sh is its verification. The self-check below re-parses
+# the boot.img we just wrote and fails the job if any field drifts from the stock recipe.
 
 set -euo pipefail
 
 ROOT="$PWD"
 DIST="$ROOT/out/dist"
+KP="$ROOT/kernel_platform"
+MKBOOTIMG="$KP/tools/mkbootimg/mkbootimg.py"
 
-[[ -d "$DIST" ]] || { echo "ERROR: $DIST missing — build.sh did not stage artifacts." >&2; exit 1; }
-if ! ls "$DIST"/Image* >/dev/null 2>&1; then
-  echo "ERROR: no kernel Image in $DIST — build likely failed." >&2
+# --- Stock boot.img header values (docs/FACTS.md §0.6 — do not guess; change only if a new
+#     source drop changes the stock partition, re-parsed from the owner's images). ---
+HDR_VERSION=4
+OS_VERSION="14.0.0"
+OS_PATCH_LEVEL="2026-04"
+SEANDROID="SEANDROIDENFORCE"
+
+# --- Pre-flight: refuse to package a missing or broken build, with a clear reason. ---
+[[ -d "$DIST" ]] || { echo "ERROR: $DIST missing — scripts/build.sh did not stage artifacts." >&2; exit 1; }
+[[ -f "$MKBOOTIMG" ]] || { echo "ERROR: mkbootimg not found at $MKBOOTIMG (source tree incomplete?)." >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is required to run mkbootimg." >&2; exit 1; }
+
+# We need the UNCOMPRESSED Image (stock boot.img carries an uncompressed arm64 Image; a
+# compressed Image.lz4/Image.gz would change the boot.img structure vs stock — refuse to
+# silently substitute one, since we could not then claim it matches the verified stock layout).
+IMAGE="$DIST/Image"
+if [[ ! -f "$IMAGE" ]]; then
+  echo "ERROR: $IMAGE (uncompressed) not found. Staged Image variants:" >&2
+  ls -la "$DIST"/Image* 2>/dev/null >&2 || echo "  (none)" >&2
+  echo "The stock boot.img uses an uncompressed Image (FACTS §0.6); refusing to substitute a compressed one." >&2
   exit 1
 fi
+[[ -s "$IMAGE" ]] || { echo "ERROR: $IMAGE is zero bytes." >&2; exit 1; }
 
-# Sanity — refuse to package an obviously broken/partial build.
+# Confirm it really is an arm64 Image: the arm64 kernel header carries the literal magic
+# "ARM\x64" at byte offset 0x38 (and begins with the "MZ" EFI stub). Guards against feeding
+# mkbootimg a truncated file or the wrong artifact.
+python3 - "$IMAGE" <<'PY'
+import sys
+d = open(sys.argv[1], 'rb').read(0x40)
+if d[:2] != b'MZ':
+    sys.exit(f"ERROR: {sys.argv[1]} does not start with the arm64 'MZ' EFI magic (got {d[:2]!r}); not a kernel Image.")
+if d[0x38:0x3c] != b'ARM\x64':
+    sys.exit(f"ERROR: {sys.argv[1]} lacks the arm64 magic 'ARM\\x64' at offset 0x38 (got {d[0x38:0x3c]!r}).")
+print(f"    Image OK: arm64 kernel, {__import__('os').path.getsize(sys.argv[1])} bytes")
+PY
+
+echo "==> Building flashable boot.img (header v$HDR_VERSION, kernel-only, os $OS_VERSION / $OS_PATCH_LEVEL)"
+BOOT="$DIST/boot.img"
+rm -f "$BOOT"
+# No --ramdisk: on this init_boot device boot.img is kernel-only (ramdisk_size=0). No
+# --cmdline: the real cmdline lives in vendor_boot (kept stock). No AVB signing key: the
+# ROM's patched vbmeta makes an unsigned boot.img boot.
+python3 "$MKBOOTIMG" \
+  --header_version "$HDR_VERSION" \
+  --os_version "$OS_VERSION" \
+  --os_patch_level "$OS_PATCH_LEVEL" \
+  --kernel "$IMAGE" \
+  -o "$BOOT"
+
+# Append the SEANDROIDENFORCE footer that stock boot.img carries right after the kernel.
+# mkbootimg (v4, kernel-only) writes exactly [4096-byte header][page-aligned kernel] and
+# stops, so this lands the footer at the same page-aligned offset as stock.
+printf '%s' "$SEANDROID" >> "$BOOT"
+
+echo "==> Wrote $BOOT ($(stat -c %s "$BOOT" 2>/dev/null || wc -c <"$BOOT") bytes)"
+
+# --- Self-check: re-parse the boot.img we just produced and assert every field matches the
+#     stock recipe. A green mkbootimg exit is not proof the bytes are right; this is. ---
+echo "==> Verifying boot.img against the stock recipe (FACTS §0.6)"
+python3 - "$BOOT" "$OS_VERSION" "$OS_PATCH_LEVEL" "$HDR_VERSION" "$SEANDROID" <<'PY'
+import struct, sys
+path, want_osv, want_osp, want_hv, seandroid = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
+d = open(path, 'rb').read()
+errs = []
+if d[:8] != b'ANDROID!':
+    errs.append(f"magic is {d[:8]!r}, expected b'ANDROID!'")
+kernel_size, ramdisk_size, os_word, header_size = struct.unpack('<IIII', d[8:24])
+header_version = struct.unpack('<I', d[40:44])[0]
+if header_version != want_hv:
+    errs.append(f"header_version={header_version}, expected {want_hv}")
+if ramdisk_size != 0:
+    errs.append(f"ramdisk_size={ramdisk_size}, expected 0 (boot.img is kernel-only on this device)")
+# decode packed os_version (top 21 bits: a.b.c, 7 each) and os_patch_level (11 bits: y,m)
+osv = os_word >> 11
+a, b, c = (osv >> 14) & 0x7f, (osv >> 7) & 0x7f, osv & 0x7f
+osp = os_word & 0x7ff
+y, m = (osp >> 4) & 0x7f, osp & 0xf
+got_osv, got_osp = f"{a}.{b}.{c}", f"{2000+y}-{m:02d}"
+if got_osv != want_osv:
+    errs.append(f"os_version={got_osv}, expected {want_osv}")
+if got_osp != want_osp:
+    errs.append(f"os_patch_level={got_osp}, expected {want_osp}")
+# cmdline (offset 44, 1536 bytes) must be empty — the real cmdline lives in vendor_boot
+cmdline = d[44:44+1536].split(b'\x00', 1)[0]
+if cmdline:
+    errs.append(f"cmdline is {cmdline!r}, expected empty")
+# kernel payload starts at page 1; confirm the arm64 Image magic survived the pack
+if d[0x1000:0x1002] != b'MZ' or d[0x1038:0x103c] != b'ARM\x64':
+    errs.append("kernel payload at page 1 is not a valid arm64 Image (MZ / ARM64 magic missing)")
+# SEANDROIDENFORCE must sit exactly at the page-aligned end of the kernel
+pagesize = 4096
+end = pagesize + ((kernel_size + pagesize - 1) // pagesize) * pagesize
+footer = d[end:end+len(seandroid)]
+if footer != seandroid.encode():
+    errs.append(f"SEANDROIDENFORCE not at page-aligned kernel end (offset {end}); found {footer!r}")
+if len(d) != end + len(seandroid):
+    errs.append(f"trailing bytes after footer: file is {len(d)}, expected {end+len(seandroid)}")
+if errs:
+    print("ERROR: produced boot.img does not match the stock recipe:", file=sys.stderr)
+    for e in errs:
+        print(f"  - {e}", file=sys.stderr)
+    sys.exit(1)
+print(f"    OK: header v{header_version}, kernel-only, os {got_osv} / {got_osp}, "
+      f"empty cmdline, SEANDROIDENFORCE @ {end}, total {len(d)} bytes")
+PY
+
+# --- Secondary artifact: the modules built against THIS kernel, for a later vendor_dlkm
+#     rebuild or inspection. Not needed for the boot.img-only first flash, but cheap to keep. ---
 _nmods="$(find "$DIST" -maxdepth 1 -name '*.ko' | wc -l)"
-(( _nmods > 0 )) || { echo "ERROR: no .ko modules staged in $DIST — a kernel with no modules is not usable." >&2; exit 1; }
-_empty="$(find "$DIST" -maxdepth 1 -type f -empty ! -name '*.zip' 2>/dev/null)"
-if [[ -n "$_empty" ]]; then
-  echo "WARN: zero-byte artifact(s) present — build may be incomplete:" >&2
-  echo "$_empty" >&2
+if (( _nmods > 0 )); then
+  STAMP="$(date -u +%Y%m%d)"
+  MODZIP="$DIST/e3q-modules-${STAMP}.zip"
+  echo "==> Bundling $_nmods kernel modules -> $MODZIP"
+  ( cd "$DIST" && rm -f "$MODZIP" \
+      && zip -q "$MODZIP" ./*.ko modules.load modules.dep modules.alias 2>/dev/null || true )
+  [[ -f "$MODZIP" ]] && ls -la "$MODZIP"
+else
+  echo "WARN: no .ko modules staged — stock modules must be kept on-device for hardware to work." >&2
 fi
-echo "==> packaging Image + $_nmods modules"
 
-STAMP="$(date -u +%Y%m%d)"
-ZIP="e3q-kernel-${STAMP}.zip"
-
-echo "==> Bundling kernel + modules -> $DIST/$ZIP"
-( cd "$DIST" && rm -f "$ZIP" && zip -q -r "$ZIP" . -x '*.zip' )
-
-echo "==> Artifact:"
-ls -la "$DIST/$ZIP"
-echo "NOTE: this is a raw kernel+module bundle, not yet a flashable image. Full repack is"
-echo "      the next Phase 1 step, after this first compile confirms the artifact layout."
+echo
+echo "==> Flashable artifact: $BOOT"
+ls -la "$BOOT"
+echo
+echo "First-boot flash plan (details in docs/FLASHING.md, Phase 2):"
+echo "  * Flash boot.img ONLY. Leave init_boot (Magisk), vendor_boot, and vendor_dlkm (stock"
+echo "    modules) untouched — this kernel keeps the android14-6.1 KMI, so stock modules load."
+echo "  * Rollback = re-flash your backed-up stock boot.img. Nothing else was changed."
+echo "  * vbmeta safety net: the ROM already ships a patched vbmeta, so no AVB step is needed."
+echo "    If a bootloader ever rejects the image, flash a vbmeta patched with"
+echo "    'avbtool make_vbmeta_image --flags 3' (i.e. --disable-verity --disable-verification)."
+echo "    NEVER re-flash a stock vbmeta over this — that re-enables verification and will fail."
