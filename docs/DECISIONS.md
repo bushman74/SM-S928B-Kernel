@@ -351,3 +351,45 @@ on-device tools — the same 64-bit-only constraint applies to any recovery-side
 
 **Would change our mind:** a newer upstream AnyKernel3 that ships arm64 (or dual-arch) tools would
 let us drop the Magisk overlay and just bump the submodule pin.
+
+---
+
+## 2026-08-14 — Disable `CONFIG_MODULE_SIG_PROTECT` (protection #7): stock GKI modules need it off
+
+**Trigger:** on the first clean boot of our protections-off kernel (Magisk modules disabled, so it
+booted without the timer-triggered bootloop), Wi-Fi, Bluetooth and Hotspot were dead while
+NFC/GPS/mobile-data worked. Loaded-module count was **480 vs the stock baseline's 541**; the 61
+missing were exactly the GKI network-protocol modules and dependents (`cfg80211`, `mac80211`,
+`qca_cld3_kiwi_v2`, `wonder`, `bluetooth`, `hci_uart`, `rfkill`, `nfc`, `can*`, `ieee802154*`,
+`tipc`, `l2tp*`, `ppp*`, `usbnet…`). Userspace: `wificond: Failed to get NL80211 family info`.
+
+**Cause (source-confirmed):** `CONFIG_MODULE_SIG_PROTECT=y` ("Android GKI module protection") adds
+two `-EACCES` gates keyed on `mod->sig_ok` — a module not signed by *this kernel's* key is refused
+if it exports (or, symmetrically, imports) a protected GKI KMI symbol
+(`kernel/module/main.c:1298` and `:1128`; `sig_ok` set in `signing.c:96`). Our build signs modules
+with its **own auto-generated key** (`CONFIG_MODULE_SIG_KEY` unset, no pinned `certs/signing_key.pem`,
+no `CONFIG_SYSTEM_TRUSTED_KEY`). The owner kept the **stock, Samsung-signed** `system_dlkm`, so those
+GKI modules fail `sig_ok` on our kernel and are rejected; everything depending on them cascades. The
+480 vendor modules load because they export only non-protected vendor symbols. (This is the gate the
+FACTS §0.3.1 module-compat analysis had missed — it reasoned only about vermagic/CRC/undefined
+symbols, which were genuinely fine.)
+
+**Decided:** neutralize it at level 1 (defconfig), consistent with the other six protections:
+`# CONFIG_MODULE_SIG_PROTECT is not set` in `gki_defconfig`. With it off, the two helper predicates
+become inert stubs (`kernel/module/internal.h:311-317`: protected-export → `false`,
+unprotected-symbol → `true`) and `gki_module.o` is dropped (`Makefile:13`); foreign-signed stock
+modules then load with a benign `TAINT_UNSIGNED_MODULE` notice. `MODULE_SIG` stays `=y`,
+`MODULE_SIG_FORCE` stays off. Nothing force-selects the symbol, so the off-switch is clean.
+
+**Why this over flashing our own modules:** flashing our *matched* `system_dlkm.img` +
+`vendor_dlkm.img` (signed with our key) would also work with the protection left on, but those are
+logical partitions inside `super` — far riskier to flash via TWRP on a no-PC device — and it is a
+much larger change than one defconfig line. Held as the fallback if disabling ever breaks the build.
+
+**Bonus:** the same gate would have rejected the out-of-tree `kernelsu.ko` in Phase 3 (an open
+question in FACTS). Disabling it now clears that too.
+
+**Would change our mind:** if disabling `MODULE_SIG_PROTECT` breaks the Kleaf/ABI build, drop back to
+a level-2 C patch (make `gki_is_module_protected_export()` return false) or to the matched-modules
+flash. Verification is still pending a real flash: re-flashed `boot.img`, `lsmod | wc -l` ≈ 541, and
+Wi-Fi/BT/Hotspot toggling on.
