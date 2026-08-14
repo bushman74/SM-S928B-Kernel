@@ -393,3 +393,43 @@ question in FACTS). Disabling it now clears that too.
 a level-2 C patch (make `gki_is_module_protected_export()` return false) or to the matched-modules
 flash. Verification is still pending a real flash: re-flashed `boot.img`, `lsmod | wc -l` ≈ 541, and
 Wi-Fi/BT/Hotspot toggling on.
+
+---
+
+## 2026-08-14 — Verify hardware health explicitly; don't infer it from "it booted" or lsmod
+
+**Trigger:** twice now a subsystem was reported working when it was not. First the Wi-Fi/BT
+breakage was found only because the owner tested the radios; then audio (playback + recording)
+turned out broken even though every audio module loads and the kernel boots. The gap: "it
+booted" and "the .ko is in lsmod" do not imply the hardware works — a driver can load and still
+fail to bring up its device (the audio HAL aborts at mixer init with a full sound-card set
+loaded). Diagnosing after the fact was also hobbled because the captures missed the state that
+matters (sound card, DSP state, early dmesg).
+
+**Decided:** build verification in three layers instead of eyeballing logs.
+
+1. **On-device PASS/FAIL self-test — `scripts/verify-hw.sh`.** Tests the *result*, not the
+   module list: every module in the device's own `modules.load` actually loaded; a real ALSA
+   sound card + PCM devices exist (`/proc/asound`); every remoteproc DSP is `running`; no
+   tombstone since boot; key HAL `init.svc.*` are running; a `wlan*` netdev exists; dmesg red
+   flags. Prints a verdict on the phone. Would have flagged both the 61 blocked net modules
+   and the dead sound card on sight.
+2. **Better raw capture — `collect-logs.sh`** now grabs `/proc/asound`, remoteproc state,
+   `init.svc`, filtered audio dmesg, and `/data/log/dumpstate_booting_delay.zip` (the full
+   early-boot dmesg the ring buffer overwrites), so a probe/HAL failure can actually be
+   root-caused next time instead of guessed.
+3. **Build-time config gate — `scripts/check-defconfig-parity.sh` in CI.** Fails the build if
+   `gki_defconfig` changed any symbol outside the protection allowlist (UH, RKP, KDP,
+   SECURITY_DEFEX, PROCA, FIVE, MODULE_SIG_PROTECT) vs the vanilla import. This is the machine
+   check for "we only compiled vanilla source with protections off."
+
+**Honest limits (stated so they aren't mistaken for guarantees):** none of this proves the
+device is perfect — only a real flash + hands-on test does. The config gate checks the source
+defconfig, not the final built `.config` (Kconfig deps can ripple; that is checked on-device
+against `/proc/config.gz`). verify-hw.sh checks the subsystems it knows to check; a failure it
+has no probe for still needs the owner to notice. The goal is to shrink the "reported working
+but wasn't" gap, not to claim it is zero.
+
+**Would change our mind:** if a lighter check (e.g. parsing a single Samsung boot self-test)
+covered the same ground, prefer it. If the final-`.config` vs `/proc/config.gz` diff can be run
+in CI cheaply, promote that to the build gate too.
