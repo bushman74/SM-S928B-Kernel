@@ -196,28 +196,57 @@ PY
 # re-applies SEANDROIDENFORCE and the vbmeta flag itself — so nothing but the kernel changes.
 AK3_SRC="$ROOT/anykernel3"
 AK3_CFG="$ROOT/anykernel/anykernel.sh"
+# AnyKernel3's own bundled tools (busybox, magiskboot, magiskpolicy) are 32-bit ARM. The e3q is
+# a 64-bit-ONLY device (ro.product.cpu.abilist32 is empty), so recovery cannot exec them — TWRP
+# aborts with "busybox: not executable: 32-bit ELF file". We swap in the arch-correct arm64
+# binaries from a pinned, checksummed Magisk release. Only the tool BINARIES are replaced; his
+# flashing scripts (ak3-core.sh, update-binary) are untouched. (FACTS §0.6; DECISIONS 2026-08-14.)
+MAGISK_VER="v28.1"
+MAGISK_URL="https://github.com/topjohnwu/Magisk/releases/download/${MAGISK_VER}/Magisk-${MAGISK_VER}.apk"
+MAGISK_SHA256="8bfd3346b3da5814f82eff6f1b1b5fedd0ad585f39a25709b23eb54aac45691d"
+
 if [[ -f "$AK3_SRC/tools/ak3-core.sh" && -f "$AK3_CFG" ]]; then
-  echo "==> Building AnyKernel3 flashable zip"
+  echo "==> Building AnyKernel3 flashable zip (with arm64 tools from Magisk $MAGISK_VER)"
   AK3ZIP="$DIST/e3q-kernel-$(date -u +%Y%m%d)-AK3.zip"
-  AK3_WORK="$(mktemp -d)"
-  # His engine, verbatim, minus VCS metadata and his demo config (we supply our own).
-  cp -a "$AK3_SRC"/. "$AK3_WORK"/
-  rm -rf "$AK3_WORK/.git" "$AK3_WORK/.github" "$AK3_WORK/.gitattributes"
-  rm -f "$AK3_WORK/anykernel.sh"
-  cp "$AK3_CFG" "$AK3_WORK/anykernel.sh"
-  # Our kernel. Uncompressed Image, matching the stock boot's uncompressed kernel; AnyKernel3
-  # repacks it into the current boot.img in the same format.
-  cp "$IMAGE" "$AK3_WORK/Image"
-  rm -f "$AK3ZIP"
-  ( cd "$AK3_WORK" && zip -r9 -q "$AK3ZIP" . -x '.git*' )
-  rm -rf "$AK3_WORK"
-  # Verify the zip carries OUR config (not his demo), our kernel, and his engine + installer.
-  python3 - "$AK3ZIP" <<'PY'
-import sys, zipfile
+  _mapk="$(mktemp)"; _mdir="$(mktemp -d)"; _tools_ok=1
+  # Fetch + verify + extract the arm64 tools before assembling; on any failure, skip the AK3 zip
+  # rather than ship one with the wrong-arch tools (boot.img / boot.tar.md5 are unaffected).
+  if curl -fsSL -o "$_mapk" "$MAGISK_URL" 2>/dev/null \
+     && echo "${MAGISK_SHA256}  ${_mapk}" | sha256sum -c - >/dev/null 2>&1 \
+     && ( cd "$_mdir" && unzip -oq "$_mapk" 'lib/arm64-v8a/libbusybox.so' 'lib/arm64-v8a/libmagiskboot.so' 'lib/arm64-v8a/libmagiskpolicy.so' ); then
+    :
+  else
+    _tools_ok=0
+    echo "WARN: could not fetch/verify pinned Magisk ($MAGISK_VER) for arm64 tools — skipping the AnyKernel3 zip." >&2
+    echo "      boot.img / boot.tar.md5 are unaffected; flash boot.img via TWRP 'Install Image' or Odin." >&2
+  fi
+
+  if (( _tools_ok )); then
+    AK3_WORK="$(mktemp -d)"
+    # His engine, verbatim, minus VCS metadata and his demo config (we supply our own).
+    cp -a "$AK3_SRC"/. "$AK3_WORK"/
+    rm -rf "$AK3_WORK/.git" "$AK3_WORK/.github" "$AK3_WORK/.gitattributes"
+    rm -f "$AK3_WORK/anykernel.sh"
+    cp "$AK3_CFG" "$AK3_WORK/anykernel.sh"
+    # Our kernel. Uncompressed Image, matching the stock boot's uncompressed kernel; AnyKernel3
+    # repacks it into the current boot.img in the same format.
+    cp "$IMAGE" "$AK3_WORK/Image"
+    # Replace ONLY the wrong-arch tool binaries with arm64 ones (scripts stay his).
+    install -m0755 "$_mdir/lib/arm64-v8a/libbusybox.so"      "$AK3_WORK/tools/busybox"
+    install -m0755 "$_mdir/lib/arm64-v8a/libmagiskboot.so"   "$AK3_WORK/tools/magiskboot"
+    install -m0755 "$_mdir/lib/arm64-v8a/libmagiskpolicy.so" "$AK3_WORK/tools/magiskpolicy"
+    rm -f "$AK3ZIP"
+    ( cd "$AK3_WORK" && zip -r9 -q "$AK3ZIP" . -x '.git*' )
+    rm -rf "$AK3_WORK"
+    # Verify: our config (not his demo) + our kernel + his engine, AND the tools are arm64 ELF
+    # (the whole point of this rebuild — never ship a 32-bit-tools zip again).
+    python3 - "$AK3ZIP" <<'PY'
+import sys, zipfile, struct
 z = zipfile.ZipFile(sys.argv[1])
 names = set(z.namelist())
-need = ["anykernel.sh", "Image", "tools/ak3-core.sh", "META-INF/com/google/android/update-binary"]
-missing = [n for n in need if n not in names and not any(x.startswith(n) for x in names)]
+need = ["anykernel.sh", "Image", "tools/ak3-core.sh", "META-INF/com/google/android/update-binary",
+        "tools/busybox", "tools/magiskboot"]
+missing = [n for n in need if n not in names]
 if missing:
     sys.exit(f"ERROR: AnyKernel3 zip missing {missing}. Has: {sorted(names)[:20]}")
 cfg = z.read("anykernel.sh").decode("utf-8", "replace")
@@ -225,8 +254,21 @@ if "device.name1=e3q" not in cfg or "BLOCK=boot;" not in cfg:
     sys.exit("ERROR: AnyKernel3 zip's anykernel.sh is not our e3q config (device.name1=e3q / BLOCK=boot missing).")
 if "ExampleKernel by osm0sis" in cfg or "maguro" in cfg:
     sys.exit("ERROR: AnyKernel3 zip still carries the demo config (osm0sis example / maguro) — our config did not overlay.")
-print(f"    AnyKernel3 zip OK: {sys.argv[1].split('/')[-1]} — e3q config, Image + engine present ({len(names)} entries)")
+for t in ("tools/busybox", "tools/magiskboot", "tools/magiskpolicy"):
+    b = z.read(t)[:20]
+    if b[:4] != b"\x7fELF":
+        sys.exit(f"ERROR: {t} is not an ELF binary.")
+    if b[4] != 2:
+        sys.exit(f"ERROR: {t} is 32-bit (EI_CLASS={b[4]}) — this 64-bit-only device cannot exec it.")
+    mach = struct.unpack('<H', b[18:20])[0]
+    if mach != 0xB7:
+        sys.exit(f"ERROR: {t} e_machine=0x{mach:x}, expected 0xB7 (AArch64).")
+print(f"    AnyKernel3 zip OK: {sys.argv[1].split('/')[-1]} — e3q config, Image + engine, arm64 tools ({len(names)} entries)")
 PY
+  else
+    AK3ZIP=""
+  fi
+  rm -rf "$_mapk" "$_mdir"
 else
   echo "WARN: anykernel3 submodule or anykernel/anykernel.sh missing — skipping AnyKernel3 zip." >&2
   echo "      (In CI, actions/checkout must use submodules: recursive to fetch anykernel3.)" >&2
@@ -252,9 +294,9 @@ echo "==> Flashable artifacts:"
 ls -la ${AK3ZIP:+"$AK3ZIP"} "$BOOT" "$BOOTTAR"
 echo
 echo "First-boot flash plan (full procedure: docs/FLASHING.md):"
-echo "  * PRIMARY: flash the AnyKernel3 zip (e3q-kernel-*-AK3.zip) in TWRP/recovery. It swaps"
-echo "    ONLY the kernel and handles SEANDROIDENFORCE + vbmeta itself."
-echo "  * Fallback if no recovery: Odin -> AP -> boot.tar.md5 (or 'dd' the raw boot.img)."
+echo "  * SIMPLEST (recovery): TWRP -> Install -> 'Install Image' -> boot.img -> Boot partition."
+echo "  * OR the AnyKernel3 zip (e3q-kernel-*-AK3.zip) in TWRP -> Install (arm64 tools, this device)."
+echo "  * OR (needs a PC) Odin -> AP -> boot.tar.md5."
 echo "    Do NOT flash vendor_boot.img / vendor_dlkm.img / system_dlkm* — build byproducts."
 echo "  * Leave init_boot (Magisk), vendor_boot, and vendor_dlkm (stock modules) untouched —"
 echo "    this kernel keeps the android14-6.1 KMI, so stock modules load."
