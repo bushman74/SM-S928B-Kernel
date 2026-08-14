@@ -145,7 +145,7 @@ still *choose* to reuse selected stock `.ko` to minimize ABI risk during Phase 1
 for all of them — the module pipeline is not blocked by any missing source.) Full authoritative load order is
 the device's own `modules.load` (owner-supplied, archived with this discovery).
 
-### 0.3.1 Will STOCK modules load on our (protections-off) kernel? — analyzed, expected YES
+### 0.3.1 Will STOCK modules load on our (protections-off) kernel? — MOSTLY, but MODULE_SIG_PROTECT rejected 61 of them (confirmed by flash 2026-08-14; fixed)
 
 The Phase 1 first flash is `boot.img` only, keeping the **stock** `vendor_boot`/`vendor_dlkm` modules.
 Whether those load against our modified kernel was analyzed from the source and the owner's real
@@ -170,13 +170,52 @@ partition images (baseline capture `2026-08-14`, stock kernel `6.1.145-android14
   The `kdp_usecount_*`/`kdp_set_cred_non_rcu` helpers (called from the `get_cred`/`put_cred` inlines under
   `CONFIG_KDP_CRED`) appear in **zero** stock modules — hardware drivers don't refcount creds.
 
-**Conclusion:** no vermagic, CRC, or undefined-symbol blocker was found; the stock modules are expected to
-load on our kernel. **Not proven** (no device) — the first flash + the `newkernel` log capture (`FLASHING.md`
-§9) confirms it: compare `lsmod` count vs the stock baseline (541) and check `dmesg` for "Unknown symbol" /
-"disagrees about version of symbol". Separately unresolved and orthogonal to module loading: the early-boot
-effect of `CONFIG_UH=off` (the EL2 uH firmware is loaded by the bootloader regardless) — see §0.4 open
-questions. **Fallback if modules do fail:** flash our *matched* `vendor_dlkm` (our build already produces it),
-so kernel and modules are one build.
+**Conclusion (vermagic/CRC/symbols):** no vermagic, CRC, or undefined-symbol blocker exists; those are not
+why anything failed. That part of the analysis held up on the real flash — the ~480 vendor modules that load
+prove version-string, MODVERSIONS-CRC and cred-layout compatibility. Separately unresolved and orthogonal:
+the early-boot effect of `CONFIG_UH=off` (the EL2 uH firmware is loaded by the bootloader regardless).
+
+**What this analysis MISSED — MODULE_SIG_PROTECT (confirmed by the 2026-08-14 flash).** The CRC/vermagic
+lens above is not the whole gate. `CONFIG_MODULE_SIG_PROTECT=y` ("Android GKI module protection",
+`kernel/module/Kconfig:134`) adds a **signature-based** check independent of MODVERSIONS: a module whose
+signature is not valid against *this kernel's* key (`mod->sig_ok == false`, set in `kernel/module/signing.c:96`)
+is rejected with `-EACCES` if it **exports a protected GKI KMI symbol**:
+
+```
+kernel/module/main.c:1298  verify_exported_symbols()
+    if (!mod->sig_ok && gki_is_module_protected_export(name)) {
+        pr_err("%s: exports protected symbol %s\n", ...);
+        return -EACCES;
+    }
+kernel/module/main.c:1128   (symmetric import-side -EACCES gate)
+```
+
+Our build signs with its **own** auto-generated key (`CONFIG_MODULE_SIG_KEY` unset → defaults to the absent
+`certs/signing_key.pem`, so the build generates a fresh key; no `CONFIG_SYSTEM_TRUSTED_KEY` pinned). The owner
+kept the **stock, Samsung-signed** `system_dlkm` → those GKI modules fail `sig_ok` on our kernel. The result,
+measured on the real flash (`newkernel2` capture, clean boot, Magisk modules off):
+
+| | stock baseline | our kernel |
+|---|---|---|
+| modules loaded | **541** | **480** |
+
+The **61 missing** are exactly the GKI *network-protocol-family* modules that export protected symbols, plus
+their dependents: `cfg80211`, `mac80211`, `qca_cld3_kiwi_v2`, `wonder` (Wi-Fi); `bluetooth`, `hci_uart`,
+`btqca`, `btbcm`, `btpower`, `rfcomm`, `hidp`, `bt_fm_slim` (BT); `nfc`, `rfkill`, `can*`, `ieee802154*`,
+`6lowpan`/`nhc_*`, `tipc`, `l2tp*`, `ppp*`/`pptp`, `usbnet` + USB-ethernet drivers, `diag`, `wwan`. Userspace
+symptom: `wificond: Failed to get NL80211 family info` (no `cfg80211` → no `nl80211` family). The ~480
+vendor_dlkm modules load because they export only vendor symbols (not in the GKI protected-export set), so the
+gate never fires for them — which is why NFC/GPS/mobile-data appeared to work while Wi-Fi/BT/Hotspot did not.
+
+**Fix applied:** disable `CONFIG_MODULE_SIG_PROTECT` in `gki_defconfig` (protection #7 — see §0.4 and the
+`defconfig: disable Android GKI module protection` commit). With it unset, `gki_is_module_protected_export()`
+returns `false` and `gki_is_module_unprotected_symbol()` returns `true` (`kernel/module/internal.h:311-317`),
+so both `-EACCES` gates are inert and the foreign-signed stock modules load (with a benign
+`TAINT_UNSIGNED_MODULE` notice). Keeps every stock partition; owner re-flashes only `boot.img`.
+**Fallback (not needed unless disabling breaks the build):** flash our *matched* `system_dlkm.img` +
+`vendor_dlkm.img` — our own modules are signed with our key, so they pass the gate with the protection left on.
+**Verification:** re-flash the new `boot.img`, `lsmod | wc -l` should reach ~541, and Wi-Fi/BT/Hotspot toggle
+on. If any module still misses, capture `dmesg` for `exports protected symbol` / `Unknown symbol`.
 
 ## 0.4 Samsung security stack *(blocking — resolved from source)*
 
@@ -197,6 +236,7 @@ build).
 | RKP / uH | `CONFIG_UH`, `CONFIG_RKP` (+ `RKP_TEST`) | `common/arch/arm64/Kconfig:2338 (UH)`, `:2349 (RKP)`; msm mirror `:2350`, `:2361`; driver source `common/drivers/uh/` (+ `msm-kernel/drivers/uh/`) | **YES (effective)** — `UH` & `RKP` are `default y` (UH `depends on !SEC_FACTORY && !ARCH_QTI_VM`; RKP `depends on UH`); not in the defconfig file. `RKP_TEST` is `# not set` at `gki_defconfig:822`. | **No** | **defconfig** — add `# CONFIG_UH is not set` (cascades RKP/KDP off via `depends on UH`). ⚠ uH is Samsung's early-boot micro-hypervisor; disabling in source is the standard approach but **must be verified at boot**. |
 | KDP | `CONFIG_KDP` (+ `KDP_CRED`, `KDP_NS`, `KDP_TEST`) | `common/arch/arm64/Kconfig:2359`, `:2369`, `:2379`; msm mirror `:2371`+ | **YES (effective)** — `KDP/KDP_CRED/KDP_NS` `default y`, `depends on UH`. `KDP_TEST` `# not set` at `gki_defconfig:827`. | **No** | **defconfig** — removing `UH` drops KDP (depends on UH); or explicit `# CONFIG_KDP is not set`. |
 | FIVE | `CONFIG_FIVE` (+ `FIVE_GKI_10`; `FIVE_TEE_DRIVER`/`FIVE_PA_FEATURE` not set) | `common/security/samsung/five/` (Kconfig:3) + `msm-kernel/security/samsung/five/` | **YES** — `=y` at `gki_defconfig:832` (+`:862`) | **No** | **defconfig** — `# CONFIG_FIVE is not set`. |
+| **#7 GKI module protection** | `CONFIG_MODULE_SIG_PROTECT` (Android GKI addition; `depends on MODULE_SIG && !MODULE_SIG_FORCE`) | `common/kernel/module/{Kconfig:134, main.c:1128/:1298, gki_module.c, internal.h:308-317, signing.c:96}` | **YES** — `=y` at `gki_defconfig:105` | **No** (grep `select MODULE_SIG_PROTECT` → none) | **defconfig** — `# CONFIG_MODULE_SIG_PROTECT is not set`. Not a boot-blocker — it silently rejected the **stock, Samsung-signed** GKI net modules (Wi-Fi/BT/NFC; `!sig_ok` + protected export → `-EACCES`) because our kernel signs with its own key. Confirmed on the 2026-08-14 flash (§0.3.1). Would also have blocked `kernelsu.ko` (Phase 3). |
 | Other (present in tree) | `security/samsung/{dsms, kumiho, mz, mz_tee_driver, ddar}` also exist. No `CONFIG_DSMS=y` seen in `gki_defconfig`. | `common/security/samsung/…` | relevance TBD | — | Primary boot/LKM blockers are UH/RKP/KDP + DEFEX + PROCA (+FIVE). Others recorded for completeness; revisit only if a boot log implicates them. |
 
 ## 0.5 Toolchain & module-loading config
@@ -209,7 +249,7 @@ build).
 | `CONFIG_LTO_CLANG_*` in e3q defconfig | Not a defconfig value — LTO is a **Kleaf `--lto` build flag**. **The stock kernel is built with `--lto=none`**: the device's live `/proc/config.gz` shows `CONFIG_LTO_NONE=y` (and `CONFIG_CC_VERSION_TEXT` = clang `r487747c`). So to match stock module ABI we build with **`lto=none`**, and that is the default of `build.sh` / the workflow input. (The clang *binary* is itself built with LTO/PGO/BOLT — the `+lto` in CC_VERSION_TEXT — but the *kernel* is `LTO_NONE`.) *(blocking — resolved: stock = none)* |
 | `CONFIG_CFI_CLANG` | **`=y`** (`common/gki_defconfig:99`; `msm-kernel/gki_defconfig:97`) *(blocking — resolved)* |
 | `CONFIG_MODVERSIONS` | **`=y`** (`common/gki_defconfig:102`; `msm-kernel/gki_defconfig:100`) *(blocking — resolved)* |
-| `CONFIG_MODULE_SIG` / `CONFIG_MODULE_SIG_FORCE` | `MODULE_SIG=y` (`common/gki_defconfig:104`) and `MODULE_SIG_PROTECT=y` (`:105`). **`MODULE_SIG_FORCE` is NOT set for pineapple** (only `vendor/neo.config`/`neo_le.config` set it — a different SoC). `MODULE_SIG_ALL` not set (`vendor/pineapple_GKI.config:94`). ⇒ unsigned `.ko` should load. ⚠ **`MODULE_SIG_PROTECT=y`** is an Android GKI addition — flag it: verify at LKM load time that it does not reject the out-of-tree `kernelsu.ko`. *(blocking — resolved: signing is NOT forced)* |
+| `CONFIG_MODULE_SIG` / `CONFIG_MODULE_SIG_FORCE` / `CONFIG_MODULE_SIG_PROTECT` | `MODULE_SIG=y` (`common/gki_defconfig:104`), `MODULE_SIG_FORCE` NOT set (only the unrelated `vendor/neo*.config` set it). **`MODULE_SIG_PROTECT` was `=y` and is now `# … is not set`** (`:105`) — see §0.3.1. The `⚠ flag` on `MODULE_SIG_PROTECT` was correct: it does **not** care whether signing is *forced* — its two `-EACCES` gates (`main.c:1128`, `:1298`) reject any `!sig_ok` module that touches a protected GKI KMI symbol. That silently killed Wi-Fi/BT/NFC (61 stock GKI modules) on the 2026-08-14 flash. Disabling it is protection #7. **Same gate would have rejected the out-of-tree `kernelsu.ko` in Phase 3** had we left it on. *(blocking — resolved: MODULE_SIG_PROTECT off; unsigned/foreign-signed `.ko` now load with a taint)* |
 | `CONFIG_KPROBES` / `HAVE_KPROBES` / `KPROBE_EVENTS` | **`KPROBES=y`** already (`common/gki_defconfig:96`). `HAVE_KPROBES` is arch-selected (`common/arch/arm64/Kconfig:213 select HAVE_KPROBES`). `KPROBE_EVENTS` not in defconfig (tracing-only, not required for KSU LKM hooks). ✅ **No kprobes-enablement patch needed** — the LKM's hooking prerequisite is satisfied out of the box. *(blocking — resolved)* |
 | `CONFIG_WERROR` | Not found in `gki_defconfig` (may be applied via build flag). Non-blocking. |
 
@@ -320,7 +360,9 @@ that), but the mechanism is established, not assumed.
 
 - Exact internal bazel `_dist` label produced by `prepare_vendor.sh pineapple gki` (non-blocking — the
   documented `prepare_vendor.sh` invocation is the canonical build entry that `scripts/build.sh` will wrap).
-- Effect of `CONFIG_MODULE_SIG_PROTECT=y` on loading the out-of-tree `kernelsu.ko` — verify at LKM load time.
+- ~~Effect of `CONFIG_MODULE_SIG_PROTECT=y` on loading the out-of-tree `kernelsu.ko`~~ — **RESOLVED 2026-08-14**:
+  the protection was rejecting the *stock* GKI modules (Wi-Fi/BT/NFC, 61 of them) on our own-key-signed kernel,
+  which would equally have blocked `kernelsu.ko`. Now disabled in `gki_defconfig` (protection #7, §0.3.1/§0.5).
 - Effect of disabling `CONFIG_UH` on early boot (uH is Samsung's micro-hypervisor, initialized before the
   kernel) — the standard custom-kernel approach, but verify at first boot in Phase 3.
 - Doc drift (Android 16 platform vs `android14-6.1` KMI): **recorded in `DECISIONS.md` 2026-08-12.**
