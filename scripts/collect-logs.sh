@@ -62,6 +62,19 @@ ls -la /data/tombstones               > '$OUT/tombstones-list.txt' 2>&1
 ls -laR /data/log                     > '$OUT/samsung-log-list.txt' 2>&1
 # EVERY module-load list (not just vendor_dlkm) — the true set of what should load at boot.
 find /vendor /odm /system /system_dlkm /vendor_dlkm -name modules.load -exec cat {} + > '$OUT/modules.load.all.txt' 2>/dev/null
+# --- Hardware bring-up STATE (a driver can load yet fail to bring its hardware up; these
+#     capture the RESULT). Audio: is there a sound card? DSPs: are ADSP/CDSP/etc. running? ---
+cat /proc/asound/cards                > '$OUT/asound-cards.txt' 2>/dev/null
+cat /proc/asound/pcm                  > '$OUT/asound-pcm.txt'   2>/dev/null
+ls -lR /proc/asound                   > '$OUT/asound-tree.txt'  2>/dev/null
+grep -H . /sys/class/remoteproc/remoteproc*/name /sys/class/remoteproc/remoteproc*/state > '$OUT/remoteproc-state.txt' 2>/dev/null
+getprop | grep -iE 'init\.svc'        > '$OUT/init-svc.txt' 2>/dev/null
+dmesg | grep -iE 'adsp|q6|apr|afe|asoc|snd_|asound|sound|lpass|remoteproc|subsys|pas_init|pil |mixer|machine_dlkm|wcd|swr' > '$OUT/dmesg-audio.txt' 2>/dev/null
+# The Samsung boot-delay bugreport carries the FULL early-boot dmesg — the exact window the
+# kernel ring buffer has already overwritten by capture time, where sound-card registration,
+# ADSP PIL load and codec probe live. Single most useful artifact for a probe/HAL failure.
+cp /data/log/dumpstate_booting_delay.zip '$OUT/' 2>/dev/null
+cp /data/log/dumpState_*.log             '$OUT/' 2>/dev/null
 chmod -R a+r '$BASE' 2>/dev/null
 tar cf '$BASE/$TAG.tar' -C '$BASE' '$TAG' 2>/dev/null
 chmod a+r '$BASE/$TAG.tar' 2>/dev/null
