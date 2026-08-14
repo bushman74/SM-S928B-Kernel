@@ -179,6 +179,7 @@ jobs:
         with:
           name: e3q-kernel-${{ github.sha }}
           path: |
+            out/dist/e3q-kernel-*-AK3.zip
             out/dist/boot.img
             out/dist/boot.tar.md5
             out/dist/e3q-modules-*.zip

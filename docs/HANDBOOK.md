@@ -75,10 +75,12 @@ This matters because tools that key off the KMI (notably **SUSFS**, whose branch
 ```
 /CLAUDE.md                     standing rules (loaded every session)
 /.gitignore                    excludes build output, fetched toolchains, blobs
-/docs/                         FACTS, PLAN, DECISIONS, HANDBOOK (this), later FLASHING/MEASUREMENTS
+/docs/                         FACTS, PLAN, DECISIONS, HANDBOOK (this), FLASHING, later MEASUREMENTS
 /.claude/skills/e3q-kernel/    the operational build/patch/package/flash skill
 /.github/workflows/build.yml   the manual-only CI build
 /scripts/                      setup-toolchain.sh, build.sh, package.sh
+/anykernel3/                   osm0sis/AnyKernel3 pinned submodule (his flashing engine, unmodified)
+/anykernel/anykernel.sh        our e3q device config for AnyKernel3 (minimal edit of his template)
 /build_kernel_GKI.sh           Samsung's own top-level build wrapper (from the OSRC drop)
 /kernel_platform/              the Samsung GKI kernel source (see §4)
 /vendor/qcom/opensource/       the Qualcomm out-of-tree driver sources (see §6)
@@ -93,8 +95,8 @@ symlinks. Everything else is byte-for-byte Samsung. Archive SHA256:
 `512c0a0b74646ddbb64ac8adea7c396c90458c2c12cf7f437e9d20282a33fa3c`.
 
 Files intentionally **absent by design** (created in later phases, their absence is not a bug):
-`docs/FLASHING.md` (Phase 2), `docs/MEASUREMENTS.md` (first checklist run),
-`scripts/patch-init-boot.sh` (Phase 3, KernelSU LKM injection). The CI preflight names the
+`docs/MEASUREMENTS.md` (first checklist run), `scripts/patch-init-boot.sh` (Phase 3, KernelSU LKM
+injection). (`docs/FLASHING.md` now exists — written alongside the first flashable build.) The CI preflight names the
 scripts it expects, so a missing one fails loudly rather than silently.
 
 ---
@@ -305,7 +307,7 @@ The three scripts:
 |---|---|---|
 | `scripts/setup-toolchain.sh` | Fetches the `prebuilts/` set (§5) into `kernel_platform/prebuilts/`. Idempotent; sparse clang checkout. | Working (CI run #2). |
 | `scripts/build.sh` | Runs `build_with_bazel.py -t pineapple gki --skip abl --lto=$LTO_MODE`, then stages `Image` + `*.ko` + dtbs into `out/dist/`. | Compiles (CI run #2, LTO=none). |
-| `scripts/package.sh` | **First version:** bundles the built kernel+modules into a zip so CI has an artifact and the dist layout is visible. The real flashable repack (boot/init_boot/vendor_dlkm, SEANDROIDENFORCE, vbmeta, AnyKernel3) is the next step. | Placeholder; real repack pending stock images. |
+| `scripts/package.sh` | Builds the flashable artifacts from the staged `Image`: (1) a header-v4 kernel-only `boot.img` (mkbootimg) with the stock recipe (os 14.0.0 / 2026-04) + `SEANDROIDENFORCE`; (2) an Odin `boot.tar.md5` wrapper; (3) the **AnyKernel3 zip** (primary) = pinned `anykernel3/` submodule engine + our `anykernel/anykernel.sh` + our `Image`; (4) a modules `.zip` for reference. Each output is self-checked (boot.img re-parsed against the stock recipe; Odin md5 verified; AK3 zip asserted to carry our e3q config + Image + his engine). | Working (CI build #5; AK3 from build #6). |
 
 **Fail-fast verification (built into the scripts + workflow):** to surface problems early and
 clearly rather than after a long compile, the pipeline self-checks at each stage —

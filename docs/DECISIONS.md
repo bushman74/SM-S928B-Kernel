@@ -279,3 +279,43 @@ Samsung custom kernels aligns with the owner's assessment.
 
 **Would change our mind:** the first flash shows some protection can stay on without blocking
 boot — then re-enable it (smaller blast radius is better) and record which.
+
+---
+
+## 2026-08-14 — Flashing format is AnyKernel3 (recovery zip); osm0sis's engine is vendored, not modified
+
+**Decided (owner's choice):** the primary way we flash our self-built kernel is an **AnyKernel3
+zip** flashed from a custom recovery (TWRP/OrangeFox). A pre-built `boot.img` and its Odin
+`boot.tar.md5` wrapper remain as the no-recovery fallback (and `boot.img` is the input AnyKernel3
+wraps). This matches the e3q-kernel skill's stated preferred iteration format.
+
+**Why AnyKernel3 for the first-boot test:** on-device it unpacks the *current* `boot.img`, swaps
+in only our kernel `Image`, repacks with matching compression, and re-applies `SEANDROIDENFORCE`
+and the vbmeta flag by itself. So the flash changes exactly the kernel and nothing else — fewer
+moving parts than shipping a hand-assembled `boot.img`, and it adapts to whatever is currently in
+the boot partition.
+
+**How it's vendored (owner constraint: do not modify his scripts):**
+- `osm0sis/AnyKernel3` is added as a **git submodule** at `anykernel3/`, pinned to commit
+  `e4b1bb2`. His flashing engine (`tools/`, `META-INF/.../update-binary`, `magiskboot`,
+  `ak3-core.sh`) is included **verbatim** and is never edited by us. Pinning (not floating
+  `master`) keeps builds reproducible and prevents an upstream change from silently altering how
+  we write the boot partition.
+- Our device configuration lives in a **separate file we own**, `anykernel/anykernel.sh` — a copy
+  of his template changed only where the device requires: `kernel.string`; `device.name1=e3q`
+  (his were Galaxy-Nexus codenames, and `do.devicecheck=1` is kept); `BLOCK=boot`;
+  `IS_SLOT_DEVICE=auto` (S24 Ultra is A/B); and removal of his `init.rc`/`init.tuna.rc`/
+  `fstab.tuna` demo ramdisk patches (they target files that don't exist on this phone and would
+  make the flash error). The install reduces to his default `dump_boot; write_boot;`. Nothing
+  else is changed.
+- `scripts/package.sh` assembles the zip = his engine (from the submodule) + our `anykernel.sh` +
+  our `Image`, and self-checks that the result carries our e3q config, our kernel, and his engine
+  (and that no demo config leaked). CI already checks out submodules recursively, so no workflow
+  change was needed to fetch it.
+
+**Cannot be pre-verified (no device):** that the zip flashes and boots is proven only on the
+device. The device-check name (`e3q`) is from the repo's ground truth; if the owner's recovery
+reports a different codename the flash aborts harmlessly and we correct the one line.
+
+**Would change our mind:** the owner has no working custom recovery → the Odin `boot.tar.md5`
+fallback becomes primary, but the AnyKernel3 zip stays for when a recovery is available.
