@@ -189,6 +189,50 @@ if got != want:
 print(f"    Odin wrapper OK: boot.tar.md5 ({len(d)} bytes), md5 {want} verified against tar body")
 PY
 
+# --- AnyKernel3 flashable zip (the owner's chosen format; TWRP/recovery-flashable). ---
+# We assemble the zip from osm0sis's pinned submodule engine (anykernel3/, UNMODIFIED) plus
+# our device config (anykernel/anykernel.sh) and our kernel Image. AnyKernel3, on-device,
+# unpacks the current boot.img, swaps in this Image, repacks with matching compression, and
+# re-applies SEANDROIDENFORCE and the vbmeta flag itself — so nothing but the kernel changes.
+AK3_SRC="$ROOT/anykernel3"
+AK3_CFG="$ROOT/anykernel/anykernel.sh"
+if [[ -f "$AK3_SRC/tools/ak3-core.sh" && -f "$AK3_CFG" ]]; then
+  echo "==> Building AnyKernel3 flashable zip"
+  AK3ZIP="$DIST/e3q-kernel-$(date -u +%Y%m%d)-AK3.zip"
+  AK3_WORK="$(mktemp -d)"
+  # His engine, verbatim, minus VCS metadata and his demo config (we supply our own).
+  cp -a "$AK3_SRC"/. "$AK3_WORK"/
+  rm -rf "$AK3_WORK/.git" "$AK3_WORK/.github" "$AK3_WORK/.gitattributes"
+  rm -f "$AK3_WORK/anykernel.sh"
+  cp "$AK3_CFG" "$AK3_WORK/anykernel.sh"
+  # Our kernel. Uncompressed Image, matching the stock boot's uncompressed kernel; AnyKernel3
+  # repacks it into the current boot.img in the same format.
+  cp "$IMAGE" "$AK3_WORK/Image"
+  rm -f "$AK3ZIP"
+  ( cd "$AK3_WORK" && zip -r9 -q "$AK3ZIP" . -x '.git*' )
+  rm -rf "$AK3_WORK"
+  # Verify the zip carries OUR config (not his demo), our kernel, and his engine + installer.
+  python3 - "$AK3ZIP" <<'PY'
+import sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+names = set(z.namelist())
+need = ["anykernel.sh", "Image", "tools/ak3-core.sh", "META-INF/com/google/android/update-binary"]
+missing = [n for n in need if n not in names and not any(x.startswith(n) for x in names)]
+if missing:
+    sys.exit(f"ERROR: AnyKernel3 zip missing {missing}. Has: {sorted(names)[:20]}")
+cfg = z.read("anykernel.sh").decode("utf-8", "replace")
+if "device.name1=e3q" not in cfg or "BLOCK=boot;" not in cfg:
+    sys.exit("ERROR: AnyKernel3 zip's anykernel.sh is not our e3q config (device.name1=e3q / BLOCK=boot missing).")
+if "ExampleKernel by osm0sis" in cfg or "maguro" in cfg:
+    sys.exit("ERROR: AnyKernel3 zip still carries the demo config (osm0sis example / maguro) — our config did not overlay.")
+print(f"    AnyKernel3 zip OK: {sys.argv[1].split('/')[-1]} — e3q config, Image + engine present ({len(names)} entries)")
+PY
+else
+  echo "WARN: anykernel3 submodule or anykernel/anykernel.sh missing — skipping AnyKernel3 zip." >&2
+  echo "      (In CI, actions/checkout must use submodules: recursive to fetch anykernel3.)" >&2
+  AK3ZIP=""
+fi
+
 # --- Secondary artifact: the modules built against THIS kernel, for a later vendor_dlkm
 #     rebuild or inspection. Not needed for the boot.img-only first flash, but cheap to keep. ---
 _nmods="$(find "$DIST" -maxdepth 1 -name '*.ko' | wc -l)"
@@ -205,10 +249,12 @@ fi
 
 echo
 echo "==> Flashable artifacts:"
-ls -la "$BOOT" "$BOOTTAR"
+ls -la ${AK3ZIP:+"$AK3ZIP"} "$BOOT" "$BOOTTAR"
 echo
 echo "First-boot flash plan (full procedure: docs/FLASHING.md):"
-echo "  * Flash the KERNEL ONLY: Odin -> AP -> boot.tar.md5 (or 'dd' the raw boot.img)."
+echo "  * PRIMARY: flash the AnyKernel3 zip (e3q-kernel-*-AK3.zip) in TWRP/recovery. It swaps"
+echo "    ONLY the kernel and handles SEANDROIDENFORCE + vbmeta itself."
+echo "  * Fallback if no recovery: Odin -> AP -> boot.tar.md5 (or 'dd' the raw boot.img)."
 echo "    Do NOT flash vendor_boot.img / vendor_dlkm.img / system_dlkm* — build byproducts."
 echo "  * Leave init_boot (Magisk), vendor_boot, and vendor_dlkm (stock modules) untouched —"
 echo "    this kernel keeps the android14-6.1 KMI, so stock modules load."
