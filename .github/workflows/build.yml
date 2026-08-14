@@ -97,6 +97,15 @@ jobs:
           done
           exit $missing
 
+      # Cheap source-level gate (runs before the ~40-minute build): prove that gki_defconfig
+      # differs from the pristine Samsung 'vanilla' import ONLY by the allowlisted protection
+      # symbols. A stray CONFIG edit fails here instead of shipping a surprise kernel.
+      # checkout is depth-1, so fetch the vanilla tip first (blob diff needs no shared history).
+      - name: Verify defconfig parity — only protections changed vs vanilla
+        run: |
+          git fetch --no-tags --depth=1 origin vanilla
+          scripts/check-defconfig-parity.sh FETCH_HEAD
+
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
