@@ -217,6 +217,39 @@ so both `-EACCES` gates are inert and the foreign-signed stock modules load (wit
 **Verification:** re-flash the new `boot.img`, `lsmod | wc -l` should reach ~541, and Wi-Fi/BT/Hotspot toggle
 on. If any module still misses, capture `dmesg` for `exports protected symbol` / `Unknown symbol`.
 
+### 0.3.2 Audio broken on our kernel — HAL mixer init aborts *(OPEN — not root-caused)*
+
+Separate from the module-loading issue above. On the 2026-08-14 clean boot of our kernel
+(Build #7, before the MODULE_SIG_PROTECT fix), audio playback **and** recording did not work.
+This is **not** a module-load failure and the MODULE_SIG_PROTECT fix does **not** address it:
+
+- **Every audio module loads.** Diffing the audio-path modules (`snd_soc_*`, `machine_dlkm`,
+  `q6_dlkm`, `wcd93x`/`wsa88x` codecs, `cs35l4x` amps, `adsp_loader_dlkm`, …) stock-vs-ours
+  shows an identical set — the only "difference" my grep caught (`ieee802154*`) is networking.
+- **The audio HAL crashes.** Tombstone (`/data/tombstones`, `Kernel Release: 6.1.145-android14-11---ab`
+  = ours, 21:52): process `/vendor/bin/hw/android.hardware.audio.service_64`, `SIGABRT`,
+  `Abort message: 'error in init audio route and audio mixer'`, backtrace in
+  `libar-pal.so ResourceManager::ResourceManager()`. Fallout: `AudioService: Failed
+  initStreamVolume`, `Audio policy registration failed`, `SoundTrigger… Failed to add module`.
+- **Downstream symptom:** `cs35l43 18-0041: … component is not enabled` — the amp never
+  entered an active route, consistent with the sound card/mixer not coming up.
+
+**Why unresolved:** the AudioReach PAL can't init the ALSA mixer, but the captures could not
+say *why* — the early-boot kernel messages (sound-card registration, ADSP PIL load, codec
+probe) had wrapped out of dmesg, `logcat -b kernel` was empty, and `last_kmsg` was a
+different session. **Leading hypothesis:** the ADSP (audio DSP) subsystem did not come up, or
+a DAI/codec probe failed, leaving an incomplete card. This overlaps the still-open
+"effect of disabling `CONFIG_UH` on early boot" question (§ open questions) — a broken secure
+PIL/remoteproc path is a candidate, and audio/ADSP is a **firmware-coupled** subsystem
+(CLAUDE.md "do not touch without approval"). **Not yet confirmed to be our-kernel-caused vs a
+pre-existing ROM/mods state** — must A/B against a stock boot.
+
+**Next step (not a blind fix):** capture with the upgraded `collect-logs.sh` (now grabs
+`/proc/asound`, `/sys/class/remoteproc/*/state`, `init.svc`, and
+`/data/log/dumpstate_booting_delay.zip` = the full early dmesg) and run `verify-hw.sh`
+on both our kernel and stock. Root-cause from the ADSP/sound-card bring-up, then fix at the
+correct level. **Do not disable more protections speculatively to chase this.**
+
 ## 0.4 Samsung security stack *(blocking — resolved from source)*
 
 **Key structural finding:** grep for `select (UH|RKP|KDP|PROCA|SECURITY_DEFEX|FIVE)` across `common/` and
@@ -364,7 +397,11 @@ that), but the mechanism is established, not assumed.
   the protection was rejecting the *stock* GKI modules (Wi-Fi/BT/NFC, 61 of them) on our own-key-signed kernel,
   which would equally have blocked `kernelsu.ko`. Now disabled in `gki_defconfig` (protection #7, §0.3.1/§0.5).
 - Effect of disabling `CONFIG_UH` on early boot (uH is Samsung's micro-hypervisor, initialized before the
-  kernel) — the standard custom-kernel approach, but verify at first boot in Phase 3.
+  kernel) — the standard custom-kernel approach, but verify at first boot in Phase 3. **May be implicated in
+  the open audio failure** (§0.3.2) if it breaks the secure ADSP/remoteproc load.
+- **Audio playback + recording broken on our kernel (§0.3.2) — OPEN, not root-caused.** Audio HAL aborts at
+  "init audio route and audio mixer"; all audio modules load. Needs the upgraded `collect-logs.sh` capture
+  (`/proc/asound`, remoteproc state, `dumpstate_booting_delay.zip`) + a stock A/B before any fix.
 - Doc drift (Android 16 platform vs `android14-6.1` KMI): **recorded in `DECISIONS.md` 2026-08-12.**
 - Stock `init_boot` ramdisk compression: source default is `lz4`; confirm by unpacking the real image
   (deferred to Phase 3 when we first repack `init_boot`).
