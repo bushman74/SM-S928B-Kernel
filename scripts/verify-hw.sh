@@ -121,6 +121,32 @@ for pat in 'exports protected symbol' 'Unknown symbol' 'disagrees about version'
 done
 echo "      (detail:  dmesg | grep -iE 'protected symbol|Unknown symbol|firmware.*fail')"
 
+# ------------------------------------------------------------ [8] identity: is this OUR kernel?
+echo ""; echo "[8] Kernel identity — the flashed kernel is our protections-off build"
+if [ -r /proc/config.gz ]; then
+  cfg=$(zcat /proc/config.gz 2>/dev/null)
+  # The 7 protections must be OFF (proves the running kernel is ours, not a stray stock flash).
+  onlist=""
+  for s in UH RKP KDP SECURITY_DEFEX PROCA FIVE MODULE_SIG_PROTECT; do
+    printf '%s\n' "$cfg" | grep -q "^CONFIG_${s}=y" && onlist="$onlist $s"
+  done
+  if [ -z "$onlist" ]; then ok "all 7 protections off in /proc/config.gz (this is our kernel)"
+  else bad "protection(s) STILL ON:$onlist — this is not (fully) our kernel / wrong artifact flashed"; fi
+  # Whole-config parity vs stock is enforced in CI (check-config-parity.sh); to run it here,
+  # place docs/baseline/config-S928BXXU5DZDP.stock + check-config-parity.sh next to this script.
+  base="$(dirname "$0")/config-S928BXXU5DZDP.stock"
+  if [ -r "$base" ] && [ -x "$(dirname "$0")/check-config-parity.sh" ]; then
+    zcat /proc/config.gz > "$TMP/running.config" 2>/dev/null
+    if sh "$(dirname "$0")/check-config-parity.sh" "$TMP/running.config" "$base" >/dev/null 2>&1; then
+      ok "whole-config parity: running kernel differs from stock only by protections"
+    else
+      warn "whole-config parity check reported a non-protection difference (run check-config-parity.sh manually)"
+    fi
+  fi
+else
+  warn "/proc/config.gz unreadable (CONFIG_IKCONFIG_PROC off?) — cannot confirm kernel identity"
+fi
+
 # ------------------------------------------------------------ summary
 echo ""; echo "=================================================================="
 echo " SUMMARY:  PASS=$PASS  FAIL=$FAIL  WARN=$WARN"

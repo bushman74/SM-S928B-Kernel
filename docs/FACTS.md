@@ -237,12 +237,26 @@ This is **not** a module-load failure and the MODULE_SIG_PROTECT fix does **not*
 **Why unresolved:** the AudioReach PAL can't init the ALSA mixer, but the captures could not
 say *why* — the early-boot kernel messages (sound-card registration, ADSP PIL load, codec
 probe) had wrapped out of dmesg, `logcat -b kernel` was empty, and `last_kmsg` was a
-different session. **Leading hypothesis:** the ADSP (audio DSP) subsystem did not come up, or
-a DAI/codec probe failed, leaving an incomplete card. This overlaps the still-open
-"effect of disabling `CONFIG_UH` on early boot" question (§ open questions) — a broken secure
-PIL/remoteproc path is a candidate, and audio/ADSP is a **firmware-coupled** subsystem
-(CLAUDE.md "do not touch without approval"). **Not yet confirmed to be our-kernel-caused vs a
-pre-existing ROM/mods state** — must A/B against a stock boot.
+different session. **Now confirmed our-kernel-caused:** the owner reports audio worked on the
+stock `boot.img` (same ROM/mods), and it broke only on our kernel — so it is one of the 7
+protection changes or their cascade, not the ROM. In-source there is **no direct** `uH`/`RKP`
+call from the remoteproc/PIL/SCM or audio-kernel path (grepped), so if a protection broke
+audio it is an **indirect/runtime** effect, not a symbol dependency.
+
+**Two concrete, testable leads (from the Magisk cross-check §0.4.1 + the config-parity delta):**
+1. **µH removed vs merely un-enforced.** Magisk keeps `CONFIG_UH` compiled in (µH running) and
+   only patches out RKP *enforcement*; we set `CONFIG_UH` fully off. Audio worked on stock
+   (µH on) and under Magisk (µH on). If the ADSP secure/PIL path needs µH present, our
+   blanket off breaks it. Source-level test: level-2 neutralization (keep `CONFIG_UH=y`, make
+   the RKP enforcement inert) instead of level-1 off.
+2. **FIVE's collateral capability loss.** Disabling `CONFIG_FIVE` cascaded `CONFIG_SIGNATURE`,
+   `INTEGRITY_ASYMMETRIC_KEYS/TRUSTED_KEYRING/SIGNATURE` **off** (they were on in stock; Magisk
+   leaves FIVE — and thus these — on). These are generic capabilities, not enforcement; if
+   audio/firmware verification needs them, restoring them (without re-enabling FIVE) is a
+   low-risk fix. Isolable by re-enabling FIVE alone and re-testing.
+
+audio/ADSP is a **firmware-coupled** subsystem (CLAUDE.md "do not touch without approval"), so
+the fix will be the minimal one the data supports, not a blanket change.
 
 **Next step (not a blind fix):** capture with the upgraded `collect-logs.sh` (now grabs
 `/proc/asound`, `/sys/class/remoteproc/*/state`, `init.svc`, and
@@ -271,6 +285,36 @@ build).
 | FIVE | `CONFIG_FIVE` (+ `FIVE_GKI_10`; `FIVE_TEE_DRIVER`/`FIVE_PA_FEATURE` not set) | `common/security/samsung/five/` (Kconfig:3) + `msm-kernel/security/samsung/five/` | **YES** — `=y` at `gki_defconfig:832` (+`:862`) | **No** | **defconfig** — `# CONFIG_FIVE is not set`. |
 | **#7 GKI module protection** | `CONFIG_MODULE_SIG_PROTECT` (Android GKI addition; `depends on MODULE_SIG && !MODULE_SIG_FORCE`) | `common/kernel/module/{Kconfig:134, main.c:1128/:1298, gki_module.c, internal.h:308-317, signing.c:96}` | **YES** — `=y` at `gki_defconfig:105` | **No** (grep `select MODULE_SIG_PROTECT` → none) | **defconfig** — `# CONFIG_MODULE_SIG_PROTECT is not set`. Not a boot-blocker — it silently rejected the **stock, Samsung-signed** GKI net modules (Wi-Fi/BT/NFC; `!sig_ok` + protected export → `-EACCES`) because our kernel signs with its own key. Confirmed on the 2026-08-14 flash (§0.3.1). Would also have blocked `kernelsu.ko` (Phase 3). |
 | Other (present in tree) | `security/samsung/{dsms, kumiho, mz, mz_tee_driver, ddar}` also exist. No `CONFIG_DSMS=y` seen in `gki_defconfig`. | `common/security/samsung/…` | relevance TBD | — | Primary boot/LKM blockers are UH/RKP/KDP + DEFEX + PROCA (+FIVE). Others recorded for completeness; revisit only if a boot log implicates them. |
+
+### 0.4.1 Cross-check against Magisk's neutralization (what a modified Samsung boot must patch)
+
+Magisk keeps the **stock kernel** and neutralizes the same Samsung protections by **binary
+patching the prebuilt Image** (`topjohnwu/Magisk` `scripts/boot_patch.sh`). Reading its
+`magiskboot hexpatch` calls is a battle-tested checklist of "what actually blocks a modified
+Samsung boot" — useful as an independent cross-check that we've covered the *class*, not just
+the symbols we happened to notice. (This corrects an earlier claim of mine that "Magisk
+doesn't touch these" — it does; it just does it dirtily, at the byte level, because it has no
+source.)
+
+| Mechanism | Magisk (binary, source-blind) | Us (source, clean) | Covered? |
+|---|---|---|---|
+| **RKP** | `hexpatch kernel 49010054… → A1020054…` — flips the RKP enforcement branch instructions, **leaving `CONFIG_UH` compiled in / µH running** | `# CONFIG_UH is not set` → **whole µH interface gone** (RKP/KDP cascade off) | ✅ but **more aggressive** — see note |
+| **DEFEX** | `hexpatch kernel 821B8012 → E2FF8F12` — neuters the DEFEX syscall check | `# CONFIG_SECURITY_DEFEX is not set` | ✅ |
+| **PROCA** | `hexpatch kernel 70726F63615F636F6E666967 → …6D616769736B00` — renames `proca_config`→`proca_magisk` so it never finds its config | `# CONFIG_PROCA is not set` | ✅ |
+| **KDP** | (not separately patched; part of the RKP/µH family) | off via `depends on UH` | ✅ |
+| **FIVE** | **not patched at all** | `# CONFIG_FIVE is not set` | ⚠ we disable it; Magisk doesn't — see §0.3.2 audio lead |
+| **GKI module sig** | n/a (Magisk keeps the stock kernel, so stock modules match) | `# CONFIG_MODULE_SIG_PROTECT is not set` | ✅ (unique to our self-built kernel) |
+| **dm-verity / AVB / forceencrypt** | `KEEPVERITY=false`, `PATCHVBMETAFLAG`, `KEEPFORCEENCRYPT` (ramdisk/vbmeta) | packaging step (vbmeta patch + `PATCH_VBMETA_FLAG` in `anykernel.sh`), **not** kernel — per CLAUDE.md | ✅ (packaging) |
+
+**Key divergence (and a live audio lead — §0.3.2):** for RKP, Magisk leaves **µH running** and
+only disables the *enforcement*; we remove **`CONFIG_UH` entirely**. Anything that depends on
+µH being present (secure/firmware-coupled paths — the ADSP is a candidate) would keep working
+under Magisk's approach but not ours. A source-level equivalent of Magisk's lighter touch is
+level-2 (keep `CONFIG_UH=y`, patch the RKP enforcement function inert) instead of level-1
+(`UH` off). Also: Magisk does **not** touch FIVE, so on a Magisk-patched stock kernel
+`CONFIG_SIGNATURE`/`INTEGRITY_*` stay **on**; disabling FIVE turned them **off** on ours
+(collateral, see §0.3.2). Both are candidates for the audio breakage and are the reason we now
+verify whole-config parity rather than only "protections off".
 
 ## 0.5 Toolchain & module-loading config
 

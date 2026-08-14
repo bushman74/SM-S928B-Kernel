@@ -433,3 +433,40 @@ but wasn't" gap, not to claim it is zero.
 **Would change our mind:** if a lighter check (e.g. parsing a single Samsung boot self-test)
 covered the same ground, prefer it. If the final-`.config` vs `/proc/config.gz` diff can be run
 in CI cheaply, promote that to the build gate too.
+
+---
+
+## 2026-08-14 — Prove "only protections changed" mechanically; prefer minimal/surgical neutralization
+
+**Context:** the owner pushed back on fixing hardware subsystem-by-subsystem as failures
+surface (networking, then audio). The premise of Phase 1 — compile *vanilla* Samsung source,
+change only what's needed to boot — should be *enforced and verified universally*, not
+eyeballed and discovered on the device.
+
+**Decided — two-layer config parity, whole-config:**
+- **Source gate** (`check-defconfig-parity.sh`, CI, before the build): the defconfig differs
+  from the vanilla import only by the allowlisted protection symbols.
+- **Built/running gate** (`check-config-parity.sh`, in `build.sh` on the extracted config and
+  in `verify-hw.sh` on `/proc/config.gz`): the *final* config differs from the stock baseline
+  (`docs/baseline/config-S928BXXU5DZDP.stock`) only by the allowlisted protection family —
+  across all ~6100 symbols, so a Kconfig `select`/`depends` ripple that silently drops *any*
+  driver (codec, sensor, fs, netdev) fails the build instead of surfacing as dead hardware.
+  Validated against the real Build-#7 running config: exactly 47 differing symbols, all in the
+  protection family, zero additions.
+
+**Decided — neutralization principle (from the Magisk cross-check, FACTS §0.4.1):** prefer the
+**minimal, most surgical** off-switch that still boots, over a blanket one. Magisk keeps µH
+running and only un-enforces RKP; we currently remove `CONFIG_UH` wholesale, which is the
+prime suspect for the audio (ADSP) breakage. When a protection's blanket removal breaks a
+firmware-coupled subsystem, drop to a narrower level (keep the subsystem present, neuter only
+the enforcement) or restore the generic capabilities it collaterally disabled (e.g. FIVE →
+`CONFIG_SIGNATURE`/`INTEGRITY_*`). Do not disable *more* than the minimum, and isolate each
+protection's effect rather than guessing.
+
+**Honest limit:** parity proves we changed only the protections; it does **not** prove the
+device works, because the protections we *do* disable have runtime effects (that is the audio
+bug). Config parity + `verify-hw.sh` (runtime) + a real flash together are the check — none
+alone is sufficient.
+
+**Would change our mind:** if a Samsung boot self-test or a single vendor health signal
+covered the runtime side as well as `verify-hw.sh`'s probes, prefer it.
