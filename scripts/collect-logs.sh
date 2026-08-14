@@ -39,6 +39,10 @@ wc -l < '$OUT/lsmod.txt'              > '$OUT/lsmod-count.txt' 2>/dev/null
 cat /vendor/lib/modules/modules.load  > '$OUT/modules.load.txt' 2>/dev/null
 dmesg                                 > '$OUT/dmesg.txt'  2>&1
 dmesg | grep -iE 'version magic|disagrees about version|unknown symbol|failed to load|probe.*(fail|error)|denied' > '$OUT/dmesg-errors.txt' 2>&1
+# The dmesg ring buffer is small and wraps within minutes; the kernel logcat buffer keeps the
+# whole boot with timestamps, so it (not dmesg) is where boot-time module-load errors survive.
+logcat -b kernel -d                   > '$OUT/logcat-kernel.txt' 2>&1
+logcat -d 2>/dev/null | grep -iE 'insmod|modprobe|\.ko|unknown symbol|cfg80211|mac80211|wlan|wifi|bluetooth|hci|nfc|avc: *denied' > '$OUT/logcat-hw.txt' 2>&1
 ip addr                               > '$OUT/net-links.txt' 2>&1
 getprop | grep -iE 'boot.?reason|reset|debug_level' > '$OUT/bootreason.txt' 2>&1
 cp /sys/fs/pstore/* '$OUT/pstore/'    2>/dev/null
