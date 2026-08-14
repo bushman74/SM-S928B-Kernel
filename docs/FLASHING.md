@@ -212,18 +212,83 @@ unsigned custom `boot.img` flashes and boots. So for this test you do **nothing*
 
 ---
 
-## 9. If it fails — what to capture (so we can fix it, not guess)
+## 9. Logs — capture a baseline now, and the same set after flashing
 
-Per the triage order we use for this device:
+Your BeyondROM (stock kernel) is our **known-good reference**. We capture the same set of logs
+**now**, then **again after flashing**; the *difference* is the diagnosis — above all, any driver
+that loaded on stock but fails to load on our kernel (that's what "some hardware might not work"
+looks like). Both facilities we rely on are confirmed present in this kernel: `/proc/config.gz`
+(so we can prove *which* kernel booted) and pstore/ramoops (so a panic **survives a reboot**).
 
-1. **Did it reach the boot animation?** Bootloop *before* the animation points at the kernel /
-   early boot; *after* points at userspace or a module.
-2. If it boots at all: `adb logcat` and `adb shell dmesg` (or `su -c dmesg`).
-3. After a bootloop, once you're back on the stock kernel: check
-   `su -c 'ls -la /sys/fs/pstore/'` — a `dmesg-ramoops-*` file there holds the **previous boot's
-   panic**, which usually names the exact cause. Send me that file.
-4. Missing hardware: `su -c lsmod` compared against what's expected — a driver that's in the
-   stock `modules.load` but not in `lsmod` is the culprit, and it's almost always a module/kernel
-   ABI mismatch, not a kernel bug.
+**Setup (same for every capture):** phone connected to the PC by USB with `adb` working, and root
+(Magisk). Each block is run from `adb shell`, then `su`. (No PC? Run the same commands in a root
+terminal app on the phone, then share the `/sdcard/e3q-logs` folder.)
 
-Give me at least one of these before we theorize about causes.
+### 9.1 The capture set — run this BOTH times (only `TAG` changes)
+
+```sh
+adb shell
+su
+# ---- set TAG to 'stock' now; to 'newkernel' after you flash ----
+TAG=stock
+D=/sdcard/e3q-logs/$TAG; mkdir -p "$D"
+uname -a                              > "$D/uname.txt" 2>&1
+cat /proc/config.gz                   > "$D/config.gz"          # gzipped; proves which kernel
+lsmod | sort                          > "$D/lsmod.txt" 2>&1     # loaded drivers (the key diff)
+cat /vendor/lib/modules/modules.load  > "$D/modules.load.txt" 2>/dev/null  # what SHOULD load
+dmesg                                 > "$D/dmesg.txt" 2>&1
+dmesg | grep -iE 'version magic|disagrees about version|unknown symbol|failed to load|probe.*(fail|error)|denied' \
+                                      > "$D/dmesg-errors.txt" 2>&1
+ip -br link                           > "$D/net-links.txt" 2>&1 # is wlan0 / bt present?
+grep -c '' "$D/lsmod.txt"             > "$D/lsmod-count.txt"
+chmod -R a+r "$D"; echo "SAVED $D"
+exit; exit
+# back on the PC:
+adb pull /sdcard/e3q-logs/$TAG
+```
+
+**Expected good outcome:** the folder pulls to the PC with non-empty files; `lsmod.txt` is a few
+hundred lines. **Send me the whole folder.** What each file is for:
+
+| File | Tells us |
+|---|---|
+| `uname.txt` / `config.gz` | **Which kernel booted.** On stock, the config has `CONFIG_UH=y` etc.; on ours those are absent — that's the proof you actually booted our kernel. |
+| `lsmod.txt` / `lsmod-count.txt` | The loaded drivers. The count on our kernel should ≈ match stock. **Fewer = a driver didn't load = the hardware it runs (Wi-Fi/BT/…) won't work.** |
+| `modules.load.txt` | What *should* be loaded. Missing = (should-load) − (loaded). |
+| `dmesg.txt` / `dmesg-errors.txt` | The kernel's own log. A module that won't load reads as *"version magic"* / *"disagrees about version of symbol"* / *"Unknown symbol"*; a driver that won't start reads as *"probe failed"*. |
+| `net-links.txt` | Quick presence check (no `wlan0` → Wi-Fi driver didn't come up). |
+
+### 9.2 If it BOOTS — capture and compare
+
+Re-run 9.1 with `TAG=newkernel`, `adb pull` it, and send me **both** folders. I diff `lsmod` and
+`dmesg-errors` between them; the delta is the whole hardware story — no guessing.
+
+### 9.3 If it does NOT boot (bootloop)
+
+The panic is saved to pstore, which **survives the reboot** — so we can still get it:
+
+1. **Recover first** (roll back, §7). Reboot **as few times as possible** — the panic buffer is
+   small and each extra boot can overwrite it.
+2. The moment you're back on the stock kernel, grab it:
+   ```sh
+   adb shell
+   su
+   mkdir -p /sdcard/e3q-logs/bootfail
+   cp -a /sys/fs/pstore/* /sdcard/e3q-logs/bootfail/ 2>/dev/null
+   ls -la /sys/fs/pstore/ > /sdcard/e3q-logs/bootfail/pstore-list.txt 2>&1
+   getprop | grep -iE 'boot.?reason|reset|debug_level' > /sdcard/e3q-logs/bootfail/bootreason.txt 2>&1
+   chmod -R a+r /sdcard/e3q-logs/bootfail; echo DONE
+   exit; exit
+   adb pull /sdcard/e3q-logs/bootfail
+   ```
+   The file that matters is usually `console-ramoops-0` or `dmesg-ramoops-0` — the last moments of
+   our kernel's failed boot. Send it.
+3. **If `/sys/fs/pstore/` is empty:** the panic was too early to be saved. Then also tell me the
+   exact symptom — black screen, or the boot animation looping, and roughly how many seconds
+   before it restarts — and, if you can boot TWRP, send `dmesg` captured from recovery.
+4. **If it won't boot *and* won't enter recovery:** use **Download Mode + Odin the stock `boot`**
+   (§7) to get back to safety. We won't get a panic that way, but you're recovered, and we retry
+   with more logging enabled.
+
+Give me at least the baseline (9.1) plus whichever of 9.2 / 9.3 applies, and we diagnose from
+evidence rather than guesses.
