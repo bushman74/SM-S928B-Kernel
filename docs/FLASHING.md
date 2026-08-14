@@ -220,9 +220,21 @@ that loaded on stock but fails to load on our kernel (that's what "some hardware
 looks like). Both facilities we rely on are confirmed present in this kernel: `/proc/config.gz`
 (so we can prove *which* kernel booted) and pstore/ramoops (so a panic **survives a reboot**).
 
-**Setup (same for every capture):** phone connected to the PC by USB with `adb` working, and root
-(Magisk). Each block is run from `adb shell`, then `su`. (No PC? Run the same commands in a root
-terminal app on the phone, then share the `/sdcard/e3q-logs` folder.)
+**Easiest — the ready-made script (on-device, no PC).** All of the captures below are packaged as
+[`scripts/collect-logs.sh`](../scripts/collect-logs.sh). In **Termux** on the phone:
+
+```sh
+curl -LO https://raw.githubusercontent.com/bushman74/SM-S928B-Kernel/main/scripts/collect-logs.sh
+sh collect-logs.sh stock       # NOW (baseline) · then 'newkernel' after flashing · 'bootfail' after a bootloop
+```
+
+It runs the whole capture through one `su` call (tap Allow on the Magisk prompt) and writes a
+single `/sdcard/e3q-logs/<tag>.tar` to upload and share. The manual commands below are the same
+thing, for reference or if you prefer running them by hand.
+
+**Manual setup (same for every capture):** phone connected to a PC by USB with `adb` working, and
+root (Magisk). Each block is run from `adb shell`, then `su`. (No PC and no Termux? Run the same
+commands in any root terminal app, then share the `/sdcard/e3q-logs` folder.)
 
 ### 9.1 The capture set — run this BOTH times (only `TAG` changes)
 
