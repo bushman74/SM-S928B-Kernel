@@ -319,3 +319,35 @@ reports a different codename the flash aborts harmlessly and we correct the one 
 
 **Would change our mind:** the owner has no working custom recovery → the Odin `boot.tar.md5`
 fallback becomes primary, but the AnyKernel3 zip stays for when a recovery is available.
+
+---
+
+## 2026-08-14 — e3q is 64-bit-only: AnyKernel3 needs arm64 tools; raw-image flashing is simplest
+
+**Trigger:** the first AnyKernel3 flash (build #6) aborted in the owner's TWRP:
+`/tmp/anykernel/tools/busybox: not executable: 32-bit ELF file` → `Busybox setup failed. Aborting...`.
+
+**Cause (not the owner's TWRP):** `osm0sis/AnyKernel3` bundles **32-bit ARM** tools (busybox,
+magiskboot, magiskpolicy, httools_static — all verified 32-bit). The S24 Ultra is a **64-bit-only**
+device — its recovery log shows `ro.product.cpu.abilist32=` empty — so it cannot exec 32-bit
+binaries, and AK3 aborts before writing anything. (Nothing was flashed; TWRP even made a
+Boot/Init_boot/Vendor_boot backup first.)
+
+**Decided:**
+1. **`scripts/package.sh` overlays arm64 tools into the AK3 zip**, taken from a pinned, checksummed
+   Magisk release (**v28.1**, sha256 `8bfd3346…`; its `lib/arm64-v8a/lib{busybox,magiskboot,
+   magiskpolicy}.so` are ELF 64-bit AArch64). Only the tool **binaries** are swapped — osm0sis's
+   scripts stay unchanged (consistent with the 2026-08-14 AnyKernel3 vendoring decision). The AK3
+   self-check now asserts the tools are 64-bit AArch64 ELF, so a 32-bit-tools zip can't ship again.
+   On a Magisk fetch/verify failure the AK3 zip is skipped, not shipped broken.
+2. **The documented simplest flash is TWRP → *Install Image* → raw `boot.img` → Boot partition**
+   (`FLASHING.md` §3a) — it needs no on-device busybox/magiskboot at all, and our `boot.img` is
+   already the finished image (kernel-only boot, so equivalent to what AK3 would repack). The
+   AnyKernel3 zip (§3b, build ≥ #7) and Odin `boot.tar.md5` (§4) are alternatives.
+
+**Consequence for Phase 3 (KernelSU LKM in init_boot):** prefer building the patched `init_boot.img`
+in CI (arm64 Linux magiskboot) and flashing it raw via *Install Image*, rather than relying on
+on-device tools — the same 64-bit-only constraint applies to any recovery-side repack.
+
+**Would change our mind:** a newer upstream AnyKernel3 that ships arm64 (or dual-arch) tools would
+let us drop the Magisk overlay and just bump the submodule pin.
