@@ -105,7 +105,7 @@ if [[ -f "$_ikc" ]]; then
   if bash "$_ikc" "$_img" >"$_builtcfg" 2>/dev/null && [[ -s "$_builtcfg" ]]; then
     echo "==> Samsung protections in the BUILT kernel (expect all off):"
     _pfail=0
-    for _s in UH RKP KDP SECURITY_DEFEX PROCA FIVE; do
+    for _s in UH RKP KDP SECURITY_DEFEX PROCA FIVE MODULE_SIG_PROTECT; do
       if grep -q "^CONFIG_${_s}=y" "$_builtcfg"; then
         echo "  STILL ON: CONFIG_${_s}=y" >&2; _pfail=1
       else
@@ -113,7 +113,16 @@ if [[ -f "$_ikc" ]]; then
       fi
     done
     (( _pfail == 0 )) || { echo "ERROR: a Samsung protection is still enabled in the built kernel — the defconfig disable did not take effect (wrong config file / a fragment re-enables it)." >&2; exit 1; }
+    # --- Whole-config parity: beyond the protections being off, prove the BUILT kernel
+    #     differs from stock ONLY by the allowlisted protection family — nothing else got
+    #     dropped or flipped by a Kconfig ripple. This is the universal regression gate. ---
+    echo "==> Whole-config parity vs stock baseline:"
+    if ! bash "$ROOT/scripts/check-config-parity.sh" "$_builtcfg"; then
+      echo "ERROR: built kernel diverges from stock outside the protection allowlist (see above)." >&2
+      echo "       A non-protection CONFIG changed — do not trust this artifact until explained." >&2
+      exit 1
+    fi
   else
-    echo "WARN: could not extract the config from the Image (IKCONFIG off?); skipping protection verification." >&2
+    echo "WARN: could not extract the config from the Image (IKCONFIG off?); skipping config verification." >&2
   fi
 fi
