@@ -301,7 +301,7 @@ that), but the mechanism is established, not assumed.
 |---|---|
 | Current ROM (name + version) | **BeyondROM 5.0**, firmware base **DZDP** (thread: `xdaforums.com/t/…4654134/`). Base firmware **matches this source drop** (`S928BXXU5DZDP`) — good for module ABI. |
 | Current root method | **Magisk Alpha** (`e8a58776-alpha`), a closed-source Magisk fork prepatched into the ROM. Owner plans to remove it before we install KernelSU Next. |
-| Kernel flasher app in use | **AnyKernel3 zip flashed in a custom recovery (TWRP/OrangeFox)** — owner-chosen 2026-08-14 (`DECISIONS.md`). `scripts/package.sh` builds the zip from a pinned `osm0sis/AnyKernel3` submodule + our `anykernel/anykernel.sh`. Odin `boot.tar.md5` / root `dd` are the no-recovery fallback. Procedure: `docs/FLASHING.md`. |
+| Kernel flasher app in use | **TWRP** (`twrp_e3q` 3.7.1, owner-confirmed working via recovery.log 2026-08-14). Simplest method: *Install Image* of the raw `boot.img` → Boot (`FLASHING.md` §3a). The **AnyKernel3** zip also works from **build ≥ #7** — build #6's zip aborted because AK3 ships 32-bit tools and **this device is 64-bit-only** (`ro.product.cpu.abilist32` empty); `package.sh` now overlays arm64 tools from pinned Magisk v28.1 (`DECISIONS.md` 2026-08-14). Odin `boot.tar.md5` = PC fallback. |
 | Stock images backed up? (`boot` / `init_boot` / `vendor_boot` / `vendor_dlkm`) | **No independent backup.** Rollback currently relies on the ROM's own images + Magisk's uninstall/restore. **See the risk note below — this is not yet a complete rollback path.** *(blocking before any flash)* |
 | Location of backups | `TBD` |
 | Coresight/ETM present? | **Present** — `coresight-*.ko` are in `modules.load` (informational only; AutoFDO already dropped). |
