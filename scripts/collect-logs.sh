@@ -47,6 +47,21 @@ ip addr                               > '$OUT/net-links.txt' 2>&1
 getprop | grep -iE 'boot.?reason|reset|debug_level' > '$OUT/bootreason.txt' 2>&1
 cp /sys/fs/pstore/* '$OUT/pstore/'    2>/dev/null
 ls -la /sys/fs/pstore/                > '$OUT/pstore-list.txt' 2>&1
+# --- Records that SURVIVE reboots (dmesg/logcat are wiped each boot; a bootloop's cause
+#     lives here). DropBox is Android's persistent store of system_server/HAL crashes,
+#     kernel panics and reboot causes; tombstones are native crashes; both live on /data. ---
+logcat -b crash  -d                   > '$OUT/logcat-crash.txt'  2>&1
+logcat -b events -d                   > '$OUT/logcat-events.txt' 2>&1
+logcat -b system -d                   > '$OUT/logcat-system.txt' 2>&1
+cat /proc/last_kmsg                   > '$OUT/last_kmsg.txt'      2>/dev/null
+cat /proc/reset_reason                > '$OUT/reset_reason.txt'   2>/dev/null
+cp -a /data/system/dropbox            '$OUT/dropbox'             2>/dev/null
+ls -la /data/system/dropbox           > '$OUT/dropbox-list.txt'   2>&1
+cp -a /data/tombstones                '$OUT/tombstones'          2>/dev/null
+ls -la /data/tombstones               > '$OUT/tombstones-list.txt' 2>&1
+ls -laR /data/log                     > '$OUT/samsung-log-list.txt' 2>&1
+# EVERY module-load list (not just vendor_dlkm) — the true set of what should load at boot.
+find /vendor /odm /system /system_dlkm /vendor_dlkm -name modules.load -exec cat {} + > '$OUT/modules.load.all.txt' 2>/dev/null
 chmod -R a+r '$BASE' 2>/dev/null
 tar cf '$BASE/$TAG.tar' -C '$BASE' '$TAG' 2>/dev/null
 chmod a+r '$BASE/$TAG.tar' 2>/dev/null
