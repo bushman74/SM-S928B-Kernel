@@ -145,6 +145,39 @@ still *choose* to reuse selected stock `.ko` to minimize ABI risk during Phase 1
 for all of them — the module pipeline is not blocked by any missing source.) Full authoritative load order is
 the device's own `modules.load` (owner-supplied, archived with this discovery).
 
+### 0.3.1 Will STOCK modules load on our (protections-off) kernel? — analyzed, expected YES
+
+The Phase 1 first flash is `boot.img` only, keeping the **stock** `vendor_boot`/`vendor_dlkm` modules.
+Whether those load against our modified kernel was analyzed from the source and the owner's real
+partition images (baseline capture `2026-08-14`, stock kernel `6.1.145-android14-11-33419968-abS928BXXU5DZDP`,
+541 modules loaded). Findings:
+
+- **The kernel version string does NOT need to match.** `kernel/module/version.c:same_magic()` skips the
+  first vermagic token (the release string) whenever the module carries CRCs — and `CONFIG_MODVERSIONS=y`,
+  so all these modules do. Only the *rest* of the vermagic (`SMP preempt mod_unload modversions <arch>`) plus
+  per-symbol CRCs are checked. Our kernel keeps the same SMP/PREEMPT/MODULE_UNLOAD/MODVERSIONS/arch, so that
+  part matches. (This refutes the common "you must match Samsung's build string" assumption for this device.)
+- **Disabling KDP does NOT change `struct cred` layout.** In `include/linux/cred.h`, `struct cred` closes
+  (`} __randomize_layout;`) *before* the `#ifdef CONFIG_KDP` block, which only adds a separate internal
+  wrapper `struct cred_kdp`. So the CRCs of the widely-imported cred functions (`commit_creds`, `prepare_creds`,
+  `override_creds`, …) are unchanged. UH/RKP don't touch `task_struct`/`mm_struct`; DEFEX/PROCA/FIVE don't
+  touch cred/sched. So the disabled protections don't shift the core exported-symbol CRC surface.
+- **No stock vendor module imports a symbol the disabled protections provide.** Scanning the owner's
+  `vendor_dlkm.img` and `vendor_boot.img` for `uh_*`/`rkp_*`/`kdp_*`/`proca_*`/`five_*`/`defex_*` finds only
+  **`uh_call`**, once each — and that is **`hdm.ko`'s own local symbol**: with `CONFIG_UH=y` the HDM Makefile
+  builds `hdm-objs = main.o uh_entry.o`, so `hdm.ko` bundles its own `uh_call` (`uh_entry.S`,
+  `SYM_CODE_START(uh_call)`) instead of importing the kernel's. So it resolves on our UH-off kernel too.
+  The `kdp_usecount_*`/`kdp_set_cred_non_rcu` helpers (called from the `get_cred`/`put_cred` inlines under
+  `CONFIG_KDP_CRED`) appear in **zero** stock modules — hardware drivers don't refcount creds.
+
+**Conclusion:** no vermagic, CRC, or undefined-symbol blocker was found; the stock modules are expected to
+load on our kernel. **Not proven** (no device) — the first flash + the `newkernel` log capture (`FLASHING.md`
+§9) confirms it: compare `lsmod` count vs the stock baseline (541) and check `dmesg` for "Unknown symbol" /
+"disagrees about version of symbol". Separately unresolved and orthogonal to module loading: the early-boot
+effect of `CONFIG_UH=off` (the EL2 uH firmware is loaded by the bootloader regardless) — see §0.4 open
+questions. **Fallback if modules do fail:** flash our *matched* `vendor_dlkm` (our build already produces it),
+so kernel and modules are one build.
+
 ## 0.4 Samsung security stack *(blocking — resolved from source)*
 
 **Key structural finding:** grep for `select (UH|RKP|KDP|PROCA|SECURITY_DEFEX|FIVE)` across `common/` and
