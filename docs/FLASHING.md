@@ -25,11 +25,11 @@ Samsung boot-blocking protections (uH/RKP/KDP, DEFEX, PROCA, FIVE) are turned of
 *self-built* kernel needs in order to boot at all on this custom-ROM phone. No root is added by
 this step; your existing Magisk stays exactly where it is.
 
-**How we flash it:** the primary method is an **AnyKernel3 zip** flashed in a custom recovery
-(TWRP/OrangeFox). AnyKernel3 takes the current `boot.img` on the phone, swaps in just our kernel,
-repacks it, and re-applies the Samsung `SEANDROIDENFORCE` marker and the vbmeta flag by itself —
-so only the kernel changes. If you don't have a working recovery, §4 gives the Odin and `dd`
-fallbacks (they flash the same kernel a different way).
+**How we flash it:** in a custom recovery (TWRP), the simplest way is **Install Image** of the raw
+`boot.img` straight to the Boot partition (§3a) — no zip, no on-device tools. The **AnyKernel3
+zip** (§3b) is an alternative that swaps just the kernel into the current `boot.img` and re-applies
+`SEANDROIDENFORCE` + the vbmeta flag itself. Either way only the kernel changes. Without a recovery,
+§4 gives the Odin and `dd` methods (same kernel, flashed from a PC).
 
 ---
 
@@ -59,46 +59,50 @@ fallbacks (they flash the same kernel a different way).
 
    | File | Use it? |
    |---|---|
-   | **`e3q-kernel-<date>-AK3.zip`** | **YES — this is the one you flash (AnyKernel3, §3).** Do *not* unzip it; flash the zip as-is. |
-   | `boot.tar.md5` | Fallback only — the Odin file (§4), if you have no recovery. |
-   | `boot.img` | Fallback only — the raw kernel image, for the `dd` method (§4). |
+   | **`boot.img`** | **YES — the simplest thing to flash.** TWRP → *Install Image* → Boot (§3a). |
+   | `e3q-kernel-<date>-AK3.zip` | Also works — the AnyKernel3 zip (§3b). **Needs a build ≥ #7** (earlier zips carry 32-bit tools that this 64-bit-only device can't run and will abort with "busybox … 32-bit ELF"). Flash the zip as-is; do *not* unzip it. |
+   | `boot.tar.md5` | The Odin file (§4) — for flashing from a PC. |
    | `e3q-modules-<date>.zip` | No. Reference copy of the modules built against this kernel; not flashed in this test. |
 
 > The artifact contains only these four files by design — the build no longer ships
-> `vendor_boot.img` / `vendor_dlkm.img` / `system_dlkm*` (they are build byproducts you must not
-> flash). The AnyKernel3 zip appears from build #6 onward; older artifacts only have the boot
-> files.
+> `vendor_boot.img` / `vendor_dlkm.img` / `system_dlkm*` (build byproducts you must not flash).
 
 ---
 
-## 3. Flash — the AnyKernel3 zip in recovery (primary method)
+## 3. Flash in recovery (TWRP) — two ways
 
-The zip is built from osm0sis's AnyKernel3 (his flashing code, unchanged) plus a small config
-for this device. On the phone it unpacks the current `boot.img`, swaps in our kernel, repacks,
-and re-applies `SEANDROIDENFORCE` and the vbmeta flag automatically — so only the kernel changes.
+**First (recommended): make a TWRP backup of Boot** — *Backup* → tick **Boot** → swipe. Then
+rollback is a one-tap *Restore*. (Backing up Init Boot + Vendor Boot too is a good idea.)
 
-1. Copy **`e3q-kernel-<date>-AK3.zip`** to the phone (internal storage or an SD card), **or**
-   keep it on the PC to use `adb sideload`.
-2. Boot into your **custom recovery** (TWRP / OrangeFox). Typically: power off, then hold
-   **Volume-Up + Power** (with the phone plugged into the PC) until recovery appears — your
-   recovery's exact key combo may differ.
-3. Flash the zip:
-   - **From storage:** *Install* → pick `e3q-kernel-<date>-AK3.zip` → swipe/confirm to flash.
-   - **Or by sideload:** in recovery choose *Advanced → ADB Sideload* (TWRP) / *Apply update →
-     ADB sideload* (OrangeFox), then on the PC run `adb sideload e3q-kernel-<date>-AK3.zip`.
-4. When it finishes, **Reboot → System**.
+### 3a. Install Image — flash the raw `boot.img` (simplest, always works)
 
-**Expected good outcome:** the recovery log shows AnyKernel3 unpacking the boot image, writing the
-new kernel, and finishing without error (you'll see lines about "Repacking & flashing" the boot
-image). The device reboots.
+Our `boot.img` is already the finished boot image, so TWRP can write it straight to the Boot
+partition — no zip, no on-device tools. This is the simplest path on this device.
 
-**Failure signatures:**
-- The log says the **device check failed** (wrong device) → stop and tell me; the zip's device
-  name may not match your phone's — I set it to `e3q`, and I'll correct it if your recovery
-  reports a different codename. Nothing was flashed.
-- Any **error during "Repacking & flashing"** → stop, do not reboot before you can, and send me
-  the recovery log (in TWRP: *Advanced → Copy Log*). Nothing partial should have been written,
-  but I want to see it.
+1. Copy **`boot.img`** to the phone (internal storage / SD card).
+2. In TWRP: **Install** → tap **Install Image** (button at the bottom-right) → pick `boot.img`.
+3. A partition list appears — select **Boot** (⚠️ *not* Recovery, *not* Init Boot) → swipe to flash.
+4. **Reboot → System.**
+
+**Expected good outcome:** "Flashing Image... Done", then it reboots. **Failure:** if the flash
+errors, stop and send me the recovery log (*Advanced → Copy Log*). Nothing else was touched.
+
+### 3b. AnyKernel3 zip (alternative)
+
+The zip is osm0sis's AnyKernel3 (his flashing code, unchanged) + a small e3q config + our kernel;
+on-device it swaps just the kernel into the current `boot.img` and re-applies `SEANDROIDENFORCE`
+and the vbmeta flag itself. **Use a build ≥ #7** — earlier zips carry 32-bit tools this 64-bit-only
+device can't run (they abort with `busybox … not executable: 32-bit ELF file`; that was our bug,
+not your TWRP, and it's fixed by shipping arm64 tools).
+
+1. Copy **`e3q-kernel-<date>-AK3.zip`** to the phone (or use `adb sideload` from a PC).
+2. In TWRP: **Install** → pick the zip → swipe to flash. (Or *Advanced → ADB Sideload*, then
+   `adb sideload e3q-kernel-<date>-AK3.zip` on the PC.)
+3. **Reboot → System.**
+
+**Failure signatures:** a **device-check** failure → the zip's `device.name` didn't match your
+phone (I set `e3q`); send me the log and I'll correct it — nothing was flashed. Any error during
+**"Repacking & flashing"** → stop and send me the log (*Advanced → Copy Log*).
 
 ---
 
