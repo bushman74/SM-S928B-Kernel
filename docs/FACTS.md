@@ -217,9 +217,21 @@ so both `-EACCES` gates are inert and the foreign-signed stock modules load (wit
 **Verification:** re-flash the new `boot.img`, `lsmod | wc -l` should reach ~541, and Wi-Fi/BT/Hotspot toggle
 on. If any module still misses, capture `dmesg` for `exports protected symbol` / `Unknown symbol`.
 
-### 0.3.2 Audio broken on our kernel — HAL mixer init aborts *(OPEN — not root-caused)*
+### 0.3.2 Audio HAL mixer-init abort on Build #7 — *RESOLVED by the MODULE_SIG_PROTECT fix (Build #9)*
 
-Separate from the module-loading issue above. On the 2026-08-14 clean boot of our kernel
+**Outcome (2026-08-15):** audio playback and recording **work on Build #9** (MODULE_SIG_PROTECT
+off). `verify-hw`/`newkernel3`: sound card present (`pineapple-mtp-snd-card`, 49 PCM devices),
+`remoteproc-adsp = running`, `vendor.audio-hal`/`vendor.secaudiohal-aidl`/`audioserver` all
+running, no tombstones. So the Build-#7 audio HAL crash was a **secondary cascade** of the
+broken-module state (61 GKI modules blocked, the whole net stack down), not an independent
+audio fault — once the full module set loads, the audio HAL inits normally. **Prediction
+error to record honestly:** we predicted the MODULE_SIG_PROTECT fix would *not* fix audio
+("audio modules all load, so it's separate"); that was wrong — it did. The µH-blanket-off and
+FIVE→SIGNATURE-cascade leads (below) turned out **moot** (no change was needed); they remain
+documented only as reasoning that did not pan out. This is exactly why we now verify the
+*result* (sound card up) rather than infer from the module list.
+
+**Historical detail (Build #7):** On the 2026-08-14 clean boot of our kernel
 (Build #7, before the MODULE_SIG_PROTECT fix), audio playback **and** recording did not work.
 This is **not** a module-load failure and the MODULE_SIG_PROTECT fix does **not** address it:
 
@@ -263,6 +275,27 @@ the fix will be the minimal one the data supports, not a blanket change.
 `/data/log/dumpstate_booting_delay.zip` = the full early dmesg) and run `verify-hw.sh`
 on both our kernel and stock. Root-cause from the ADSP/sound-card bring-up, then fix at the
 correct level. **Do not disable more protections speculatively to chase this.**
+
+### 0.3.3 Build #9 hardware status — Phase-1 gate essentially met *(2026-08-15)*
+
+Build #9 (`main` @ `aedaf28`: all 7 protections off, MODULE_SIG_PROTECT included) on the real
+device, `newkernel3` capture + `verify-hw`:
+
+| Check | Result |
+|---|---|
+| Modules loaded | **541 — exact parity with stock (541)**; only `ipclite_test`/`kheaders`/`llcc_perfmon` not loaded, and those don't load on stock either |
+| Whole-config parity vs stock | **PASS** — 48 differing symbols, all protection-family, zero additions (`check-config-parity.sh`) |
+| Audio | **works** — sound card + 49 PCM, `remoteproc-adsp = running`, audio HALs running |
+| Wi-Fi / Bluetooth | **work** (owner-confirmed; `wlan0`, wificond + wifi/bt HALs running) |
+| DSPs | ADSP/MSS/CDSP `running`; SPSS `attached` (normal external-boot state, 0 dmesg errors) |
+| Native crashes | **none** since boot (dropbox has only an app crash + app ANR — not kernel/HAL) |
+| dmesg red flags | **0** (`exports protected symbol` / `Unknown symbol` / firmware-load-fail) |
+
+Owner spot-checks still needed to fully close the gate: camera, fingerprint, GPS lock, phone
+calls (in/out audio), auto-rotate/proximity sensors. No known hardware regression remains in
+the logs. The four `verify-hw` "FAIL"s on this capture were false alarms (test/debug modules,
+SPSS `attached`, two one-shot/diagnostic services); `verify-hw.sh` was tightened so they no
+longer FAIL.
 
 ## 0.4 Samsung security stack *(blocking — resolved from source)*
 
