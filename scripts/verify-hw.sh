@@ -140,29 +140,38 @@ echo "      (detail:  dmesg | grep -iE 'protected symbol|Unknown symbol|firmware
 
 # ------------------------------------------------------------ [8] identity: is this OUR kernel?
 echo ""; echo "[8] Kernel identity — the flashed kernel is our protections-off build"
-if [ -r /proc/config.gz ]; then
-  cfg=$(zcat /proc/config.gz 2>/dev/null)
-  # The 7 protections must be OFF (proves the running kernel is ours, not a stray stock flash).
+# NOTE: decompress via a temp FILE, trying several tools. Reading /proc/config.gz straight into
+# a shell var with `zcat` returned EMPTY on this device — which silently made every kernel look
+# "protections off" (a false 'this is our kernel', even for stock). collect-logs works because it
+# copies the compressed bytes and decompresses off-device; do the same here, and if decompression
+# yields nothing, WARN — never claim identity from an empty read.
+cat /proc/config.gz > "$TMP/kcfg.gz" 2>/dev/null
+( zcat "$TMP/kcfg.gz" 2>/dev/null || gzip -dc "$TMP/kcfg.gz" 2>/dev/null \
+  || gunzip -c "$TMP/kcfg.gz" 2>/dev/null || toybox zcat "$TMP/kcfg.gz" 2>/dev/null ) > "$TMP/kcfg"
+if [ -s "$TMP/kcfg" ]; then
   onlist=""
   for s in UH RKP KDP SECURITY_DEFEX PROCA FIVE MODULE_SIG_PROTECT; do
-    printf '%s\n' "$cfg" | grep -q "^CONFIG_${s}=y" && onlist="$onlist $s"
+    grep -q "^CONFIG_${s}=y" "$TMP/kcfg" && onlist="$onlist $s"
   done
   if [ -z "$onlist" ]; then ok "all 7 protections off in /proc/config.gz (this is our kernel)"
-  else bad "protection(s) STILL ON:$onlist — this is not (fully) our kernel / wrong artifact flashed"; fi
-  # Whole-config parity vs stock is enforced in CI (check-config-parity.sh); to run it here,
-  # place docs/baseline/config-S928BXXU5DZDP.stock + check-config-parity.sh next to this script.
+  else bad "protection(s) STILL ON:$onlist — this is STOCK / not our kernel (wrong boot.img flashed)"; fi
+  # Full whole-config parity if the baseline + checker are placed next to this script.
   base="$(dirname "$0")/config-S928BXXU5DZDP.stock"
-  if [ -r "$base" ] && [ -x "$(dirname "$0")/check-config-parity.sh" ]; then
-    zcat /proc/config.gz > "$TMP/running.config" 2>/dev/null
-    if sh "$(dirname "$0")/check-config-parity.sh" "$TMP/running.config" "$base" >/dev/null 2>&1; then
+  if [ -r "$base" ] && [ -f "$(dirname "$0")/check-config-parity.sh" ]; then
+    if sh "$(dirname "$0")/check-config-parity.sh" "$TMP/kcfg" "$base" >/dev/null 2>&1; then
       ok "whole-config parity: running kernel differs from stock only by protections"
     else
-      warn "whole-config parity check reported a non-protection difference (run check-config-parity.sh manually)"
+      warn "whole-config parity reported a non-protection difference (run check-config-parity.sh manually)"
     fi
   fi
 else
-  warn "/proc/config.gz unreadable (CONFIG_IKCONFIG_PROC off?) — cannot confirm kernel identity"
+  warn "could not decompress /proc/config.gz on-device (no working zcat/gzip, or IKCONFIG off) — kernel identity unconfirmed"
 fi
+# Secondary identity signal that needs no decompression: the release string.
+case "$(uname -r)" in
+  *S928B*|*abS928*) warn "uname '$(uname -r)' carries the Samsung firmware string — looks like STOCK, not our build" ;;
+  *) : ;;
+esac
 
 # ------------------------------------------------------------ summary
 echo ""; echo "=================================================================="
