@@ -429,6 +429,22 @@ then appends the `SEANDROIDENFORCE` footer. **No stock `boot.img` is needed in C
 the only inputs, and they are recorded here. (`init_boot.img` = kernel-less, lz4 ramdisk ~1.44 MB carrying the
 generic ramdisk + the owner's Magisk, which is where KernelSU's LKM goes in Phase 3.)
 
+**Phase-3 `init_boot` base — recoverable from the owner's own image (no firmware download).** Unpacking the
+owner's real `init_boot.img` (`BeyondROM_images/`, 8 MiB partition dump) confirms header **v4**,
+`kernel_size=0`, `ramdisk_size=1,471,776` (~1.44 MB) at page 1 (offset 4096), **lz4-legacy** (magic
+`02 21 4c 18`). The ramdisk is Magisk-patched (`init` = magiskinit; `overlay.d/sbin/{magisk,stub,init-ld}.xz`)
+but **retains an intact embedded `.backup/`**:
+- `.backup/init.xz` → decompresses to the stock first-stage `init` (ELF, **3,247,392 B**, sha1 `22d740e2…`);
+- `.backup/.magisk` records `PREINITDEVICE=cache`, `KEEPVERITY=true`, `KEEPFORCEENCRYPT=false`,
+  `SHA1=e0ed42d8…` (the stock image Magisk patched);
+- `.backup/.rmlist` shows the only added paths are `overlay.d/*`.
+
+So the clean generic ramdisk is reconstructable **from the owner's image** via `magiskboot cpio ramdisk.cpio
+restore` (restore original `init`, drop `overlay.d`, drop `.backup`). The Phase-3 KSU base therefore needs
+**no** official-firmware download; the Samsung AP-tar `init_boot.img.lz4` is only a fallback for a future image
+that lacks the backup. `scripts/patch-init-boot.sh` must branch on backup presence (restore-or-fail) rather
+than assume a clean input.
+
 **Full stock `boot.img` trailer, and why we reproduce only the first part.** Parsing the whole stock
 partition (not just the SEANDROIDENFORCE offset) shows three appended blocks after the page-aligned kernel:
 
@@ -480,7 +496,9 @@ that), but the mechanism is established, not assumed.
   "init audio route and audio mixer"; all audio modules load. Needs the upgraded `collect-logs.sh` capture
   (`/proc/asound`, remoteproc state, `dumpstate_booting_delay.zip`) + a stock A/B before any fix.
 - Doc drift (Android 16 platform vs `android14-6.1` KMI): **recorded in `DECISIONS.md` 2026-08-12.**
-- Stock `init_boot` ramdisk compression: source default is `lz4`; confirm by unpacking the real image
-  (deferred to Phase 3 when we first repack `init_boot`).
+- Stock `init_boot` base for Phase 3: **RESOLVED** (§0.6). Unpacked the owner's real `init_boot.img` — header
+  v4, lz4-legacy ramdisk (~1.44 MB). The Magisk-patched ramdisk retains an intact embedded `.backup/`
+  (`.backup/init.xz` = stock init ELF, 3.2 MB), so the clean generic ramdisk is recoverable via
+  `magiskboot restore` — no official-firmware download needed for the KSU base.
 - Rollback path: owner has no independent stock backup; the stock DZDP firmware must be stashed before the
   first flash (`DECISIONS.md` 2026-08-12, §0.7).
