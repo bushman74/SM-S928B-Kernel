@@ -445,6 +445,23 @@ restore` (restore original `init`, drop `overlay.d`, drop `.backup`). The Phase-
 that lacks the backup. `scripts/patch-init-boot.sh` must branch on backup presence (restore-or-fail) rather
 than assume a clean input.
 
+**`/data` encryption is disabled at the VENDOR level, not by Magisk — so switching Magisk→KSU will NOT
+re-encrypt (no wipe risk).** Verified 2026-08-15 from the owner's running device. The disable is persistent,
+in the Samsung/vendor security layer, and survives removing Magisk:
+- `ro.security.vaultkeeper.feature=0`, `init.svc.vaultkeeper=stopped` / `vaultkeeper_hal=stopped` — Samsung's
+  key-enforcement service (Vaultkeeper) is disabled and not running (multidisabler signature).
+- `persist.security.ucm_fbe_mode=0` (persistent), `security.fbe.fail_cause=R` — FBE mode off; FBE did not init.
+- `/vendor/etc/fstab.qcom` userdata line carries `metadata_encryption=aes-256-xts:wrappedkey_v0` +
+  `keydirectory=/metadata/vold/metadata_encryption` + `encryptable` but **no `fileencryption=`** — the vendor
+  fstab (which Magisk does not edit) does not request FBE. `/data/data` lists real plaintext package names.
+- `ro.crypto.state=encrypted` is **cosmetic/spoofed** (its `ro.crypto.type` is empty and FBE failed) — almost
+  certainly `resetprop`'d for Play Integrity while `/data` is actually plaintext.
+
+Consequence for Phase 3: the KSU `init_boot` restoring the stock init and dropping Magisk's `KEEPFORCEENCRYPT`
+patch is safe — decryption is anchored below the boot ramdisk. **The only re-encryption risk is a ROM/firmware
+update that restores the stock vendor fstab or re-enables Vaultkeeper** (OTA-class, unrelated to Magisk/KSU);
+keep a `/data` backup before any such update.
+
 **Full stock `boot.img` trailer, and why we reproduce only the first part.** Parsing the whole stock
 partition (not just the SEANDROIDENFORCE offset) shows three appended blocks after the page-aligned kernel:
 
