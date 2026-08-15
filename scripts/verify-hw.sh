@@ -41,10 +41,17 @@ find /vendor /odm /system /system_dlkm /vendor_dlkm -name modules.load 2>/dev/nu
   -exec cat {} + 2>/dev/null | sed 's#.*/##; s/\.ko$//; s/-/_/g' | sort -u > "$TMP/want"
 nload=$(grep -c . "$TMP/load"); nwant=$(grep -c . "$TMP/want")
 comm -23 "$TMP/want" "$TMP/load" > "$TMP/miss" 2>/dev/null
-nmiss=$(grep -c . "$TMP/miss")
-echo "      loaded=$nload  in-modules.load=$nwant  not-loaded=$nmiss"
-if [ "$nmiss" -eq 0 ]; then ok "every module in modules.load is loaded"
-else bad "$nmiss module(s) in modules.load did NOT load:"; sed 's/^/          - /' "$TMP/miss"; fi
+# Test/debug/selftest modules are listed in modules.load but do NOT load at boot even on
+# stock (verified: ipclite_test, kheaders, llcc_perfmon are all absent on the stock kernel
+# too). Don't cry wolf over those — separate them from a real driver that failed to load.
+optpat='(^kheaders$|_test$|_perfmon$|_selftest$|_kunit$)'
+grep -vE "$optpat" "$TMP/miss" > "$TMP/miss_real" 2>/dev/null || true
+grep -E  "$optpat" "$TMP/miss" > "$TMP/miss_opt"  2>/dev/null || true
+nreal=$(grep -c . "$TMP/miss_real"); nopt=$(grep -c . "$TMP/miss_opt")
+echo "      loaded=$nload  in-modules.load=$nwant  not-loaded=$((nreal+nopt))"
+if [ "$nreal" -eq 0 ]; then ok "all functional modules loaded (only optional test/debug not loaded, same as stock)"
+else bad "$nreal driver module(s) did NOT load:"; sed 's/^/          - /' "$TMP/miss_real"; fi
+[ "$nopt" -gt 0 ] && echo "        (optional test/debug not loaded — benign, matches stock: $(tr '\n' ' ' < "$TMP/miss_opt"))"
 
 # ------------------------------------------------------------ [2] audio / sound card
 echo ""; echo "[2] Audio — ALSA sound card + PCM devices"
@@ -68,8 +75,12 @@ for d in /sys/class/remoteproc/remoteproc*; do
   [ -d "$d" ] || continue
   found=1
   nm=$(cat "$d/name" 2>/dev/null); st=$(cat "$d/state" 2>/dev/null)
-  if [ "$st" = "running" ]; then ok "${nm:-$d} = running"
-  else bad "${nm:-$d} = '${st:-?}' (not running — audio=ADSP, sensors=SLPI/ADSP depend on this)"; fi
+  # "running" = kernel booted the firmware; "attached" = firmware booted externally (TZ) and
+  # the kernel attached to it — normal for SPSS (the secure subsystem). Both are healthy.
+  case "$st" in
+    running|attached) ok "${nm:-$d} = $st" ;;
+    *) bad "${nm:-$d} = '${st:-?}' (not up — audio=ADSP, sensors=SLPI/ADSP depend on this)" ;;
+  esac
 done
 [ "$found" -eq 0 ] && warn "no /sys/class/remoteproc entries found (check 'dmesg | grep -i adsp')"
 
@@ -91,17 +102,23 @@ if [ "$ncrash" -eq 0 ]; then ok "no tombstones since this boot"
 else bad "$ncrash native crash(es) since boot (a HAL/service aborted — see names above)"; fi
 
 # ------------------------------------------------------------ [5] key HAL services
-echo ""; echo "[5] Key HAL services (init.svc.* should be 'running')"
-getprop 2>/dev/null | grep -iE '\[init\.svc\.(vendor\.)?[^]]*(audio|wifi|cnss|wlan|bluetooth|_bt_|camera|sensor|gnss|nfc)' > "$TMP/svc"
+echo ""; echo "[5] Key HAL services (running = good; restarting = crash loop; stopped = one-shot/off)"
+getprop 2>/dev/null | grep -iE '\[init\.svc\.(vendor\.)?[^]]*(audio|wifi|cnss|wlan|bluetooth|_bt_|camera|sensor|gnss|nfc)' \
+  | grep -vE '\[init\.svc_debug_pid\.' > "$TMP/svc"
 if [ -s "$TMP/svc" ]; then
   while IFS= read -r line; do
     nm=$(echo "$line" | sed -n 's/^\[init\.svc\.\([^]]*\)\].*/\1/p')
     st=$(echo "$line" | sed -n 's/.*: \[\([^]]*\)\].*/\1/p')
     [ -z "$nm" ] && continue
-    if [ "$st" = "running" ]; then echo "  PASS  svc $nm = running"; else echo "  FAIL  svc $nm = '$st'"; fi
+    case "$st" in
+      running)    echo "  PASS  svc $nm = running" ;;
+      restarting) echo "  FAIL  svc $nm = restarting (crash loop)" ;;
+      *)          echo "  WARN  svc $nm = '$st' (one-shot/disabled — only a problem if that feature is dead)" ;;
+    esac
   done < "$TMP/svc"
   PASS=$((PASS + $(grep -cE ': \[running\]' "$TMP/svc")))
-  FAIL=$((FAIL + $(grep -vE ': \[running\]' "$TMP/svc" | grep -c .)))
+  FAIL=$((FAIL + $(grep -cE ': \[restarting\]' "$TMP/svc")))
+  WARN=$((WARN + $(grep -vE ': \[(running|restarting)\]' "$TMP/svc" | grep -c .)))
 else
   warn "no matching init.svc.* properties (naming differs — inspect 'getprop | grep init.svc')"
 fi
