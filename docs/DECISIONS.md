@@ -470,3 +470,46 @@ alone is sufficient.
 
 **Would change our mind:** if a Samsung boot self-test or a single vendor health signal
 covered the runtime side as well as `verify-hw.sh`'s probes, prefer it.
+
+---
+
+## 2026-08-15 — Phase 3: pin KernelSU Next v3.3.0 (LKM mode), KMI android14-6.1
+
+**Decided:** integrate **KernelSU Next `v3.3.0`** (released 2026-07-03) in **LKM mode**, built
+against our own kernel. Pinned tag, not the floating `next` branch.
+
+**Why v3.3.0:**
+- It ships an **`android14-6.1_kernelsu.ko`** asset — our exact KMI (kernel 6.1.145,
+  `android14-6.1`), confirming this generation is supported.
+- LKM mode has been supported since v1.0.8; v3.x is the current line with a matching manager app.
+- Latest stable (non-prerelease) at decision time, so the manager and the module match.
+
+**Why LKM (not GKI-integrated KSU):** we already did the hard part in Phase 1 — a self-built,
+protections-off kernel that boots and loads foreign modules. LKM keeps KSU as a `.ko` in
+`init_boot`, leaving `boot.img` = pure protections-off kernel. That preserves the clean Phase-1
+baseline and keeps root a separate, independently-flashable/revertible artifact.
+
+**Prerequisites already met (no extra kernel patch needed):**
+- `CONFIG_KPROBES=y` (FACTS §0.5) — LKM syscall hooks work.
+- `MODULE_SIG_FORCE` not set, and `MODULE_SIG_PROTECT` now **off** (protection #7, 2026-08-14) —
+  an unsigned `kernelsu.ko` built against our kernel will load. (This is the payoff of that fix:
+  the same gate that rejected the stock Wi-Fi modules would have rejected `kernelsu.ko`.)
+
+**Build sequence:**
+1. Add KSU Next (pinned v3.3.0) to the tree; build `kernelsu.ko` **in the same CI job**, against
+   our kernel output, so vermagic/CRC match. (No device needed — verifies the `.ko` builds.)
+2. Obtain the **stock** `init_boot.img` (owner's BeyondROM firmware) as the patch base — it is
+   firmware, not committed to the repo.
+3. `scripts/patch-init-boot.sh`: unpack the ramdisk (detect compression — FACTS open item says
+   source default `lz4`, confirm on the real image), inject `ksud` + the KMI-matched `.ko` into
+   the init sequence, repack with matching compression, re-apply SEANDROIDENFORCE (+ vbmeta as
+   needed).
+4. Add a `kernelsu` workflow input emitting a patched `init_boot.img` artifact.
+5. Owner backs up their current (Magisk) `init_boot`, flashes our `boot.img` + patched
+   `init_boot.img`, verifies KSU manager shows root, then re-runs the full REGRESSION.md checklist.
+
+**Rollback:** `init_boot` is separate from `boot`; the owner's existing Magisk `init_boot` (backed
+up first) restores their current setup in one flash. `boot.img` (Build #9) is unaffected.
+
+**Would change our mind:** if v3.3.0's `.ko` fails to load or fails the hardware checklist, drop
+to the prior stable tag or investigate vermagic/kprobes before proceeding to SUSFS (Phase 4).
