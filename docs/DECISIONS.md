@@ -513,3 +513,35 @@ up first) restores their current setup in one flash. `boot.img` (Build #9) is un
 
 **Would change our mind:** if v3.3.0's `.ko` fails to load or fails the hardware checklist, drop
 to the prior stable tag or investigate vermagic/kprobes before proceeding to SUSFS (Phase 4).
+
+---
+
+## 2026-08-15 — Phase 3 packaging: ksud host boot-patch after magiskboot restore
+
+**Decided:** `scripts/patch-init-boot.sh` builds the KSU-Next `init_boot` with two pinned host
+tools, on x86_64 in CI (no device):
+1. **magiskboot** (Magisk v28.1, x86_64) reverses Magisk on the owner's stock `init_boot` —
+   mandatory, because `ksud` refuses a Magisk-patched image.
+2. **ksud** (`ksud-x86_64-unknown-linux-musl`, KSU-Next v3.3.0) `boot-patch -m <our kernelsu.ko>`
+   installs the LKM (init→init.real, ksuinit as init, our `.ko`, `ksu_config`) and repacks.
+
+**Why the `ksud` host binary, not the on-device manager app:** the manager patches on-device with
+its *bundled* prebuilt `.ko`; we need OUR module (vermagic-matched). `ksud`'s `-m` flag injects our
+`.ko` verbatim (verified byte-identical, sha256), and the static musl x86_64 binary runs in CI, so
+the artifact is reproducible and device-free.
+
+**Why not hand-rolled magiskboot injection:** `ksud` embeds `ksuinit` and the exact LKM init
+sequence (init.real handoff, `ksu_config`); reimplementing it by hand would duplicate ksud and
+drift from upstream. We use `ksud` for the KSU-specific part and magiskboot only for the
+Magisk-reversal it uniquely handles.
+
+**Validated 2026-08-15 (sandbox, x86_64):** ran the whole script on the owner's real
+`init_boot.img` with the generic `android14-6.1_kernelsu.ko` as a *structural placeholder*. Output
+ramdisk: `init`=ksuinit, `init.real`=stock init (sha1 `22d740e2…`), `kernelsu.ko`=the exact `-m`
+input (sha256 equal), `ksu_config`=`allow_shell=1`. Header v4, lz4_legacy, 8 MiB. Script exits 0.
+
+**Still required for a flashable image (not doable in-sandbox):** build `kernelsu.ko` against OUR
+kernel (`CONFIG_KSU=m`) in CI and pass it as `--kmod`. The generic prebuilt is a placeholder only —
+it will very likely not load on our Samsung KMI (vermagic/CRC).
+
+**Pinned & sha256-gated in the script:** KSU-Next v3.3.0 (`f450a7f6…`), Magisk v28.1 (`8bfd3346…`).
