@@ -9,7 +9,7 @@ change our mind. Read this before reopening a settled question.
 
 **Decided:** `vanilla` is import-only (one commit per Samsung OSRC drop, tagged by firmware
 build string). Our changes live as a rebasable patch series replayed onto it. Build variants
-(toolchain, LTO mode, KernelSU on/off, later SUSFS) are GitHub Actions workflow inputs.
+(toolchain, LTO mode) are GitHub Actions workflow inputs.
 
 **Why:** Samsung ships tarballs, not git history, so "vanilla" can only be import commits.
 Long-lived feature branches would each need reconciling against every firmware drop; a patch
@@ -97,7 +97,7 @@ into a project that has the full source.
   source. Preference order per symbol: defconfig off-switch → targeted C patch of the
   enforcement function → post-build image patch only when source has no workable off-switch.
 - **Category B — SEANDROIDENFORCE footer and vbmeta/AVB:** stay as post-build steps in
-  `scripts/package.sh` / `patch-init-boot.sh`. These are partition/bootloader-level, not kernel
+  `scripts/package.sh`. These are partition/bootloader-level, not kernel
   behaviour; no source line produces them regardless of source access. Ramdisk compression
   (lz4_legacy) is likewise a packaging concern.
 
@@ -224,7 +224,7 @@ owner's explicit choice among presented options.
   eventual patch series). **This is what CI builds.**
 - **Task branches** — each unit of work on its own short-lived `task/<name>` branch → PR → merge
   into `main`. This supersedes "no per-feature branches"; that earlier rule was about build
-  *variants* (toolchain/LTO/KernelSU/SUSFS), which remain **workflow inputs**, not branches.
+  *variants* (toolchain/LTO), which remain **workflow inputs**, not branches.
 
 **Why:** keeps "vanilla" meaning *unmodified*, so re-importing a future Samsung firmware drop is
 mechanical — import onto `vanilla`, replay `main`'s series, and fail loudly if a patch no longer
@@ -473,115 +473,31 @@ covered the runtime side as well as `verify-hw.sh`'s probes, prefer it.
 
 ---
 
-## 2026-08-15 — Phase 3: pin KernelSU Next v3.3.0 (LKM mode), KMI android14-6.1
+## 2026-08-17 — Wind down: SUSFS paused (LKM-incompatible), from-source KSU pipeline removed
 
-**Decided:** integrate **KernelSU Next `v3.3.0`** (released 2026-07-03) in **LKM mode**, built
-against our own kernel. Pinned tag, not the floating `next` branch.
+Supersedes and removes the three preceding entries (the 2026-08-15 KSU-Next v3.3.0 pin and its
+"ksud host boot-patch" packaging plan, and the 2026-08-16 SUSFS groundwork).
 
-**Why v3.3.0:**
-- It ships an **`android14-6.1_kernelsu.ko`** asset — our exact KMI (kernel 6.1.145,
-  `android14-6.1`), confirming this generation is supported.
-- LKM mode has been supported since v1.0.8; v3.x is the current line with a matching manager app.
-- Latest stable (non-prerelease) at decision time, so the manager and the module match.
+**SUSFS is paused.** Its author confirmed SUSFS is **incompatible with KernelSU's LKM mode** as of
+now, for performance reasons, and plans to revisit it later. Root on this device runs in LKM mode,
+so SUSFS is dropped from scope until that changes. All SUSFS artifacts were deleted (`patches/susfs/`),
+along with the SUSFS-specific docs and the `susfs` workflow input.
 
-**Why LKM (not GKI-integrated KSU):** we already did the hard part in Phase 1 — a self-built,
-protections-off kernel that boots and loads foreign modules. LKM keeps KSU as a `.ko` in
-`init_boot`, leaving `boot.img` = pure protections-off kernel. That preserves the clean Phase-1
-baseline and keeps root a separate, independently-flashable/revertible artifact.
+**The from-source KSU pipeline was removed as unused.** Root was achieved on-device (2026-08-16) by
+patching `init_boot` with the **KernelSU-Next manager (v3.3.0, LKM)** and flashing it, running on
+**BeyondROM's own kernel** — which already ships `KPROBES=y`, module signing off, and the six Samsung
+protections off (`FACTS §0.6`). So the custom kernel was never needed for root, and the pipeline we
+had built for it — an in-tree `CONFIG_KSU=m` `.ko` build, `scripts/patch-init-boot.sh`, and the
+`kernelsu` workflow input — was deleted. (The generic `android14-6.1` module loads on BeyondROM's
+kernel because `modversions` ignores the sublevel gap.)
 
-**Prerequisites already met (no extra kernel patch needed):**
-- `CONFIG_KPROBES=y` (FACTS §0.5) — LKM syscall hooks work.
-- `MODULE_SIG_FORCE` not set, and `MODULE_SIG_PROTECT` now **off** (protection #7, 2026-08-14) —
-  an unsigned `kernelsu.ko` built against our kernel will load. (This is the payoff of that fix:
-  the same gate that rejected the stock Wi-Fi modules would have rejected `kernelsu.ko`.)
+**Kept:** the device-verified custom-kernel build (Phase 1-2 — `build.sh`, `package.sh`, the Samsung
+source tree). It boots with all hardware working (Build #9) and stands as a complete result; no
+active build task is open against it. KSU-Next **v3.3.0** remains the root version in use (manager).
 
-**Build sequence:**
-1. Add KSU Next (pinned v3.3.0) to the tree; build `kernelsu.ko` **in the same CI job**, against
-   our kernel output, so vermagic/CRC match. (No device needed — verifies the `.ko` builds.)
-2. Obtain the **stock** `init_boot.img` (owner's BeyondROM firmware) as the patch base — it is
-   firmware, not committed to the repo.
-3. `scripts/patch-init-boot.sh`: unpack the ramdisk (detect compression — FACTS open item says
-   source default `lz4`, confirm on the real image), inject `ksud` + the KMI-matched `.ko` into
-   the init sequence, repack with matching compression, re-apply SEANDROIDENFORCE (+ vbmeta as
-   needed).
-4. Add a `kernelsu` workflow input emitting a patched `init_boot.img` artifact.
-5. Owner backs up their current (Magisk) `init_boot`, flashes our `boot.img` + patched
-   `init_boot.img`, verifies KSU manager shows root, then re-runs the full REGRESSION.md checklist.
+**Would reopen SUSFS:** if its author makes it LKM-compatible (or if we later choose built-in KSU),
+rebuild the SUSFS + KSU integration against the custom kernel, which remains the base it would need.
+The pinned susfs4ksu branch was `gki-android14-6.1` @ `e287d590` (recorded in case it is revived).
 
-**Rollback:** `init_boot` is separate from `boot`; the owner's existing Magisk `init_boot` (backed
-up first) restores their current setup in one flash. `boot.img` (Build #9) is unaffected.
-
-**Would change our mind:** if v3.3.0's `.ko` fails to load or fails the hardware checklist, drop
-to the prior stable tag or investigate vermagic/kprobes before proceeding to SUSFS (Phase 4).
-
----
-
-## 2026-08-15 — Phase 3 packaging: ksud host boot-patch after magiskboot restore
-
-**Decided:** `scripts/patch-init-boot.sh` builds the KSU-Next `init_boot` with two pinned host
-tools, on x86_64 in CI (no device):
-1. **magiskboot** (Magisk v28.1, x86_64) reverses Magisk on the owner's stock `init_boot` —
-   mandatory, because `ksud` refuses a Magisk-patched image.
-2. **ksud** (`ksud-x86_64-unknown-linux-musl`, KSU-Next v3.3.0) `boot-patch -m <our kernelsu.ko>`
-   installs the LKM (init→init.real, ksuinit as init, our `.ko`, `ksu_config`) and repacks.
-
-**Why the `ksud` host binary, not the on-device manager app:** the manager patches on-device with
-its *bundled* prebuilt `.ko`; we need OUR module (vermagic-matched). `ksud`'s `-m` flag injects our
-`.ko` verbatim (verified byte-identical, sha256), and the static musl x86_64 binary runs in CI, so
-the artifact is reproducible and device-free.
-
-**Why not hand-rolled magiskboot injection:** `ksud` embeds `ksuinit` and the exact LKM init
-sequence (init.real handoff, `ksu_config`); reimplementing it by hand would duplicate ksud and
-drift from upstream. We use `ksud` for the KSU-specific part and magiskboot only for the
-Magisk-reversal it uniquely handles.
-
-**Validated 2026-08-15 (sandbox, x86_64):** ran the whole script on the owner's real
-`init_boot.img` with the generic `android14-6.1_kernelsu.ko` as a *structural placeholder*. Output
-ramdisk: `init`=ksuinit, `init.real`=stock init (sha1 `22d740e2…`), `kernelsu.ko`=the exact `-m`
-input (sha256 equal), `ksu_config`=`allow_shell=1`. Header v4, lz4_legacy, 8 MiB. Script exits 0.
-
-**Still required for a flashable image (not doable in-sandbox):** build `kernelsu.ko` against OUR
-kernel (`CONFIG_KSU=m`) in CI and pass it as `--kmod`. The generic prebuilt is a placeholder only —
-it will very likely not load on our Samsung KMI (vermagic/CRC).
-
-**Pinned & sha256-gated in the script:** KSU-Next v3.3.0 (`f450a7f6…`), Magisk v28.1 (`8bfd3346…`).
-
----
-
-## 2026-08-16 — Phase 4: SUSFS approach pinned + groundwork
-
-**Context:** plain KSU-Next root now works on BeyondROM's own kernel (FACTS §0.6), so the custom
-kernel's remaining unique purpose is **SUSFS**, which is a kernel patch and cannot ride a prebuilt
-kernel.
-
-**Decided:**
-1. **Pin susfs4ksu** to branch `gki-android14-6.1` (our exact KMI) @ commit
-   `e287d59066380bf6de4396532d4a42edf4408701`.
-2. **Vendor** the kernel-side artifacts into `patches/susfs/` rather than fetch from GitLab at build
-   time. GitLab *is* reachable through the sandbox/CI proxy (`git ls-remote` and `clone` both
-   succeed), so this is for reproducibility + version-pinning, not because retrieval is blocked.
-   Answers the owner's "GitLab retrieval / stable solution" concern: the build sees a fixed local
-   copy.
-3. **Userspace side stays a packaging artifact** (`ksu_module_susfs`, `ksu_susfs`), not vendored —
-   pulled at package time like ksud/magiskboot.
-
-**De-risked (dry-run 2026-08-16):** the 114-hunk kernel patch applies **111/114** to our Samsung
-6.1.145 tree; only 3 hunks fail (fs/namespace.c #1+#8, fs/proc/base.c #1), two of them trivial
-`#include` drift. So SUSFS is genuinely adaptable to this tree — no deep conflicts.
-
-**Open questions to resolve before build-integrating (in `patches/susfs/README.md`):**
-- KSU-Next vs weishu KSU: use KSU-Next's native `CONFIG_KSU_SUSFS` rather than the weishu-targeted
-  `10_enable_susfs_for_ksu.patch`; confirm the susfs version KSU-Next v3.3.0 expects.
-- Built-in KSU (`CONFIG_KSU=y`, inline hooks — SUSFS ≥ v2.0.0 dropped kprobes) vs the current LKM
-  mode. SUSFS likely wants built-in KSU; confirm KSU-Next's supported combination.
-- Must **delete `android/abi_gki_protected_exports_{aarch64,x86_64}`** or GKI ABI protection blocks
-  the new exports and Wi-Fi-class modules fail (upstream step 11).
-
-**Critical-path consequence:** SUSFS needs our custom kernel (Build #9), which is already
-device-verified with **all** hardware working — audio included (FACTS §0.3.2, resolved by the
-MODULE_SIG_PROTECT fix). So the SUSFS build starts from a known-good custom kernel; there is **no**
-audio blocker. (An earlier version of this entry wrongly called audio "back on the critical path" —
-it was reading a since-deleted stale open-item; corrected 2026-08-16.)
-
-**Would change our mind:** if the 3-hunk adaptation turns out to hide deeper conflicts once building,
-or if KSU-Next's SUSFS support requires a different susfs branch/version, revisit the pin.
+Note: earlier entries (2026-08-11/12) still mention SUSFS as a then-planned goal — that is historical
+context, superseded by this entry.
