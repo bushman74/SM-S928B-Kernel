@@ -87,7 +87,8 @@ and disk deliberate. There are no prebuilt kernels checked into this repo; you p
 running the workflow. Toolchain fetch, compile, and packaging each self-check and fail loudly
 rather than shipping a bad artifact.
 
-A green run uploads one artifact containing:
+A green run uploads each of these as a **separate artifact in its native extension** — no wrapping
+zip (`upload-artifact@v7` with `archive: false`), so you download the file itself, ready to flash:
 
 | File | What it is |
 |---|---|
