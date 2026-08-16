@@ -63,5 +63,6 @@ apply cleanly until those 3 hunks are adapted. Adapting + build-verifying them i
   building KSU **into** the kernel (`CONFIG_KSU=y`) rather than the LKM mode currently in use for
   plain root. Confirm KSU-Next's supported combination for SUSFS.
 - **Custom kernel required.** SUSFS is a kernel patch, so it needs our built-from-source kernel — it
-  cannot ride on BeyondROM's prebuilt kernel (which is what currently carries plain KSU root). Our
-  kernel's open audio regression (`docs/FACTS.md` §0.3.2) is therefore back on the critical path.
+  cannot ride on BeyondROM's prebuilt kernel (which currently carries plain KSU root). That custom
+  kernel (Build #9) is already device-verified with all hardware working, **audio included**
+  (`docs/FACTS.md` §0.3.2, resolved) — so it is a known-good base, not an audio blocker.
