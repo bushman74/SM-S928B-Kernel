@@ -35,13 +35,14 @@ No phase begins before the previous gate passes.
 **Goal:** compile Samsung's source and boot it with all hardware working, changing only the
 minimum required to make a *self-built* kernel boot on **this** device.
 
-> **Device reality (owner-confirmed, verified against `/proc/config.gz`) — protections come in
-> here, not Phase 3.** BeyondROM runs the **stock, unmodified kernel** (its live config has all
-> six protections still `=y`), and boots because uH/RKP/KDP are satisfied by the unmodified
-> kernel they guard — only PROCA is byte-patched, and Magisk supplies root. But *we* flash a
-> **self-built (modified) kernel**, which uH/RKP/KDP detect as tampered → bootloop. So
-> **disabling the Samsung boot-blocking protections is part of "the minimum to boot"** for us and
-> lives in Phase 1, *before* any KernelSU/SUSFS. (Phase 3 keeps only the LKM-specific pieces.)
+> **Device reality — why the protections come off in Phase 1, not later.** We flash a **self-built
+> (modified) kernel** built from pristine Samsung source, where uH/RKP/KDP/DEFEX/PROCA/FIVE are on
+> by default; those protections accept only Samsung's own signed kernel and bootloop a modified one.
+> So **disabling the Samsung boot-blocking protections is part of "the minimum to boot"** for us and
+> lives in Phase 1. (Correction, 2026-08-17: an earlier version of this note claimed BeyondROM's
+> *own* kernel runs these `=y` — the device config dump proved otherwise. BeyondROM ships them
+> **off** — no `MODULE_SIG_*`, none of UH/RKP/KDP/DEFEX/PROCA/FIVE `=y` — `FACTS §0.6`, which is
+> exactly why plain KSU root loads on BeyondROM's kernel without ours.)
 
 - [x] Import the archive to `vanilla`; tag `osrc/<build-string>` (done: `osrc/S928BXXU5DZDP`)
 - [x] `scripts/setup-toolchain.sh` — fetch the reference Clang + prebuilts (green in CI)
@@ -86,58 +87,36 @@ tested `FLASHING.md`).
 
 ---
 
-## Phase 3 — Samsung protection neutralization + KernelSU Next (LKM)
+## Phase 3 — KernelSU Next root
 
-This is the core of the project. Order matters: the kernel must first boot modified (Phase 1
-already disables the boot-blocking protections) and be able to load an out-of-tree module,
-*then* the LKM goes into init_boot.
-
-**Status: root ACHIEVED (2026-08-16) — exit gate MET, via a route we didn't originally plan.** The
-owner reached working KernelSU-Next root by patching `init_boot` with the KSU-Next **manager** and
-flashing it, running on **BeyondROM's own kernel** — which already ships the six protections off +
-module loading (`FACTS §0.6`, config dump: `KPROBES=y`, no `MODULE_SIG_*`, no UH/RKP/KDP/DEFEX/
-PROCA/FIVE). So **plain root did not need our custom kernel.** The generic `android14-6.1` module
-loaded (modversions ignores the sublevel gap); `/proc/modules` shows `kernelsu … Live`, SELinux
-Enforcing, no crashes (one minor bug: the manager's in-app *Reboot* seccomp-crashes ksud on
-Android 16 — use the power menu). The from-source pieces below matter now only for the Phase-4
-SUSFS build, where a custom kernel *is* required.
+**Status: root ACHIEVED (2026-08-16) — exit gate MET.** The owner reached working KernelSU-Next root
+by patching `init_boot` with the KSU-Next **manager** and flashing it, running on **BeyondROM's own
+kernel** — which already ships the six protections off + module loading (`FACTS §0.6`, config dump:
+`KPROBES=y`, no `MODULE_SIG_*`, none of UH/RKP/KDP/DEFEX/PROCA/FIVE `=y`). So **root did not need our
+custom kernel**, and the from-source KSU pipeline we had built for it (an in-tree `CONFIG_KSU=m`
+`.ko` build + `scripts/patch-init-boot.sh` + a `kernelsu` workflow input) went unused and has been
+removed (`DECISIONS.md` 2026-08-17).
 
 - [x] Kprobes already enabled by Samsung (`CONFIG_KPROBES=y`, `FACTS §0.5`) — no patch needed.
-- [x] `MODULE_SIG_PROTECT` off so the unsigned `kernelsu.ko` can load *(done: protection #7; the
-      boot-blocking protections were already neutralized in Phase 1)*
-- [ ] Add KernelSU Next to the tree (pinned tag); build `kernelsu.ko` **against our kernel**
-      *(deferred to Phase 4 — plain root used the manager's module on BeyondROM's kernel; this
-      in-tree `CONFIG_KSU=m` build is only needed for the custom-kernel SUSFS image)*
-- [x] `scripts/patch-init-boot.sh` — restore the stock ramdisk + `ksud boot-patch` the LKM into
-      `init_boot.img` *(done: PR #31, validated end-to-end against the real image)*
-- [~] Add `kernelsu` input to the workflow *(the input exists in `build.yml`; the `package.sh`
-      wiring that calls `patch-init-boot.sh` is a Phase-4 step)*
-- [x] Owner flashes a patched `init_boot.img` *(done via the KSU-Next manager on BeyondROM's kernel,
-      not our `boot.img` — see Status above)*
+- [x] `MODULE_SIG_PROTECT` off so an unsigned `kernelsu.ko` can load *(done in Phase 1: protection
+      #7 — and, as it turned out, BeyondROM's kernel already has it off, which is where root loaded)*.
+- [x] Root installed on-device: patch `init_boot` with the KSU-Next manager and flash it.
 
 **Exit gate:** KSU Next manager shows the module active and grants root, **and** the full
-hardware checklist from Phase 1 still passes. Re-verify every item — this is where
-regressions hide. **→ MET 2026-08-16** (manager shows `KernelSU: 33214`, LKM active, root granted,
-hardware unaffected).
+hardware checklist from Phase 1 still passes. **→ MET 2026-08-16** (manager shows `KernelSU: 33214`,
+LKM active, root granted, hardware unaffected). One minor upstream bug: the manager's in-app
+*Reboot* seccomp-crashes ksud on Android 16 (`FACTS §0.6`) — use the power menu.
 
 ---
 
-## Phase 4 — SUSFS
+## Phase 4 — SUSFS *(paused)*
 
-- [x] Select the susfs4ksu branch matching our KMI *(done: `gki-android14-6.1`, pinned commit
-      `e287d590`, vendored in `patches/susfs/`)*
-- [~] Apply the SUSFS kernel patch as one of our patches; resolve fallout in-tree *(dry-run applies
-      111/114 hunks to our tree; 3 hunks in `fs/namespace.c` + `fs/proc/base.c` to adapt — not yet
-      wired into `build.sh`)*
-- [ ] Resolve KSU-Next's SUSFS mode (native `CONFIG_KSU_SUSFS`; built-in vs LKM), enable it, rebuild
-      the custom kernel + repack `init_boot`; delete `android/abi_gki_protected_exports_*`
-- [ ] Owner flashes and verifies SUSFS features via the manager / `ksu_susfs`
-
-**Exit gate:** SUSFS active, root works, hardware checklist still passes.
-
-**Status: groundwork done (2026-08-16).** Pinned + vendored; patch de-risked against our tree; open
-questions recorded in `patches/susfs/README.md`. Needs the custom kernel (Build #9 — a known-good,
-all-hardware-working base; **no** audio blocker).
+**Wound down 2026-08-17.** SUSFS's author confirmed it is **incompatible with KernelSU's LKM mode**
+for now (a performance trade-off) and plans to revisit it later. Since root here runs in LKM mode,
+SUSFS is dropped from scope until that changes. All SUSFS artifacts and the from-source KSU pipeline
+that would have carried it have been removed (`DECISIONS.md` 2026-08-17). If SUSFS becomes
+LKM-compatible, the custom kernel (Build #9 — device-verified, all hardware working) is the base it
+would build on.
 
 ---
 

@@ -1,18 +1,19 @@
 # Samsung Galaxy S24 Ultra — custom GKI kernel (SM-S928B / e3q)
 
 A from-source rebuild of Samsung's own kernel for the **Galaxy S24 Ultra (SM-S928B)**, changed
-as little as possible to boot on a custom ROM — then, in later phases, root via **KernelSU Next
-(LKM)** and **SUSFS**. The guiding rule of the project is *conservatism*: build Samsung's
-**unmodified** source, add only a small, reviewable patch series, and never claim something works
-until it has been flashed and checked on the actual device.
+as little as possible to boot on a custom ROM. The guiding rule of the project is *conservatism*:
+build Samsung's **unmodified** source, add only a small, reviewable patch series, and never claim
+something works until it has been flashed and checked on the actual device. (Root and SUSFS were
+later goals; see the status and roadmap below for where they landed.)
 
-> **Status — Phases 1–2 device-verified · KernelSU Next root working · SUSFS (Phase 4) in progress.**
+> **Status — custom kernel device-verified · KernelSU Next root working · SUSFS paused.**
 > The self-built kernel (Build #9, the six Samsung protections off) **boots on hardware with all
 > hardware working — Wi-Fi, Bluetooth, mobile data, S-Pen, camera, fingerprint, and audio** (see
 > `docs/FACTS.md` §0.3.2). A tested flash/rollback procedure and a regression baseline are in place.
-> **KernelSU Next root works on the device** (via a manager-patched `init_boot`; the from-source LKM
-> packaging in `scripts/patch-init-boot.sh` is also built and validated end-to-end). Current work is
-> **SUSFS**, whose kernel patch is vendored and pinned in `patches/susfs/`.
+> **KernelSU Next root works on the device**, achieved by patching `init_boot` with the KSU-Next
+> manager on the ROM's existing kernel — independent of this from-source build. **SUSFS is paused:**
+> its author confirmed it is incompatible with KernelSU's LKM mode for now. The custom kernel stands
+> as a complete, verified result; no active build task is open against it.
 
 This repository is a work log as much as a kernel tree: every change is a small commit with its
 reasoning, so a boot failure can be bisected to one decision. If you are reading it to learn how a
@@ -56,13 +57,14 @@ inventory — lives in [`docs/FACTS.md`](docs/FACTS.md), which is the project's 
 
 ## What we change — and what we deliberately don't
 
-**We change only what a self-built kernel needs to boot and root on this device:**
+**We change only what a self-built kernel needs to boot on this device:**
 
 - **Disable the six Samsung boot-blocking protections** — uH/RKP/KDP, DEFEX, PROCA, FIVE — at the
   defconfig level, one protection per commit. These accept only Samsung's own signed kernel and
   bootloop a modified one; they are the minimum removal required to boot our build.
-- Later phases add **KernelSU Next (LKM)** patched into `init_boot.img`, then **SUSFS** — as
-  packaging/patch steps, not as churn in the kernel source.
+
+Root (KernelSU Next) is **not** a change to this source tree — it is applied on-device by patching
+`init_boot` with the KSU-Next manager, and works on the ROM's existing kernel. SUSFS is paused.
 
 **We deliberately don't touch:**
 
@@ -129,8 +131,8 @@ main      vanilla + our patch series. This is what CI builds.
 task/*    Short-lived branches, opened as pull requests into main and merged when done.
 ```
 
-Build **variants** (toolchain, LTO mode, KernelSU on/off, later SUSFS) are **workflow inputs**,
-not branches — a variant is a way to build the same code, not a change to it. Every new Samsung
+Build **variants** (toolchain, LTO mode) are **workflow inputs**, not branches — a variant is a way
+to build the same code, not a change to it. Every new Samsung
 source drop is imported onto `vanilla`, then the patch series is replayed onto it; a patch that no
 longer applies is treated as a signal to investigate, not to force.
 
@@ -142,8 +144,8 @@ longer applies is treated as a signal to investigate, not to force.
 |---|---|---|
 | **1** | Reproducible build of Samsung's source that boots with all hardware working (protections off, otherwise unmodified). | **Done — device-verified.** Build #9 boots; all hardware works, audio included (FACTS §0.3.2). |
 | **2** | Reproducibility hardening; a tested flash/rollback procedure. | **Done.** `docs/FLASHING.md` written + rollback tested; regression baseline in `docs/REGRESSION.md`. |
-| **3** | KernelSU Next root in `init_boot.img`. | **Done — root working.** Achieved via a KSU-Next-manager-patched `init_boot`; the from-source LKM pipeline (`scripts/patch-init-boot.sh`) is built and validated. |
-| **4** | SUSFS on top of KernelSU Next. | **In progress** — susfs4ksu pinned + vendored (`patches/susfs/`); kernel patch applies 111/114 to our tree. |
+| **3** | KernelSU Next root. | **Done — root working.** Achieved on-device by patching `init_boot` with the KSU-Next manager (on the ROM's existing kernel); not a change to this source tree. |
+| **4** | ~~SUSFS~~ | **Paused.** Its author confirmed SUSFS is incompatible with KernelSU's LKM mode for now; dropped from scope until that changes (see `docs/DECISIONS.md`). |
 
 Each phase has an **exit gate that requires a real flash on real hardware** — see
 [`docs/PLAN.md`](docs/PLAN.md) for the gates and the per-phase checklist.
@@ -155,8 +157,8 @@ Each phase has an **exit gate that requires a real flash on real hardware** — 
 - **Samsung Open Source Release Center** — the kernel and driver source (`S928BXXU5DZDP`).
 - **[osm0sis/AnyKernel3](https://github.com/osm0sis/AnyKernel3)** — the flashing engine, vendored
   as a pinned submodule and used unmodified.
-- **[KernelSU Next](https://github.com/KernelSU-Next/KernelSU-Next)** — root, in LKM mode (Phase 3).
-- **[susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu)** — SUSFS (Phase 4).
+- **[KernelSU Next](https://github.com/KernelSU-Next/KernelSU-Next)** — root, applied on-device via
+  the manager (LKM mode), independent of this kernel build.
 
 ## License
 

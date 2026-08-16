@@ -22,13 +22,17 @@ Android kernel for:
 | Build system | See `docs/FACTS.md`. Assume Kleaf/Bazel until proven otherwise. |
 | Owner status | Bootloader unlocked, custom ROM, rooted. No warnings needed on that front. |
 
-Goals, in priority order:
+Goals, in priority order — and where they landed:
 1. A reproducible build of **unmodified** Samsung source that boots with all hardware working.
-2. **KernelSU Next in LKM mode**, patched into `init_boot.img`, plus the Samsung/Knox
-   patching required to make a modified kernel boot and to let the LKM load at all.
-3. **SUSFS** (susfs4ksu) on top of a working KernelSU Next.
+   **Done — device-verified (Build #9), all hardware incl. audio.**
+2. **KernelSU Next (LKM) root.** **Done**, but achieved **on-device via the KSU-Next manager** on the
+   ROM's existing kernel — which already ships the Samsung protections off and module signing off —
+   *not* from our source. The from-source KSU pipeline built for this was removed as unused.
+3. **SUSFS** (susfs4ksu) on top of KernelSU Next. **Paused** — its author confirmed it is
+   incompatible with KernelSU LKM mode for now (`docs/DECISIONS.md 2026-08-17`).
 
-Goal 1 gates everything. There is no point in 2 or 3 until 1 is boringly reliable.
+The custom kernel (goal 1) stands as a complete, verified result; there is no active build task open
+against it. If SUSFS becomes LKM-compatible, that kernel is the base it would build on.
 
 Qualcomm CLO backporting is **out of scope for now** (dropped 2026-08-11). Do not add CLO
 remotes, do not cherry-pick from CLO, do not reintroduce it without an explicit new decision
@@ -103,21 +107,19 @@ vanilla            import-only. One commit per Samsung OSRC drop. Tagged by firm
                    build string (current: `osrc/S928BXXU5DZDP`). NOTHING ELSE EVER LANDS HERE.
 main               vanilla + our patch series. This is what CI builds.
 patches/           our changes as a rebasable series (git format-patch output):
-                   Samsung protection neutralization, kprobes/config enablement,
-                   later the SUSFS kernel patch.
+                   Samsung protection neutralization, kprobes/config enablement.
 ```
 
 Work happens on **short-lived task branches** (`task/<name>`, e.g. `task/thin-lto`,
 `task/kernelsu-lkm`) opened as pull requests into `main` and merged when done. Build **variants**
-(toolchain, LTO mode, KernelSU on/off, later SUSFS on/off) are **workflow inputs**, not branches —
-a variant is a way to build the same code, not a change to it. (This supersedes an earlier
-"no per-feature branches" rule, which was really about variants; see `docs/DECISIONS.md`
-2026-08-12.)
+(toolchain, LTO mode) are **workflow inputs**, not branches — a variant is a way to build the same
+code, not a change to it. (This supersedes an earlier "no per-feature branches" rule, which was
+really about variants; see `docs/DECISIONS.md` 2026-08-12.)
 
-KernelSU Next (LKM) and the SUSFS userspace module are packaging/artifact steps, not kernel
-source — they produce a patched `init_boot.img`, not commits on `main`. The kernel-side
-pieces they require (kprobes enabled, protections neutralized, SUSFS kernel patch) do live in
-`patches/`.
+KernelSU Next root is applied **on-device** — by patching `init_boot` with the KSU-Next manager — not
+a change to this source tree, and not a commit on `main`. It runs on the ROM's existing kernel; the
+kernel-side prerequisites a from-source build would need (kprobes enabled, protections neutralized)
+are already in the config. SUSFS is paused (`docs/DECISIONS.md 2026-08-17`).
 
 Every new Samsung source drop: import onto `vanilla`, then replay `patches/` onto it. If a
 patch no longer applies, that is signal — investigate, don't force.
@@ -180,13 +182,12 @@ assistant or a session link — see above.)
   assumptions, FACTS wins. If you learn something new about the tree, write it there.
 - **`docs/DECISIONS.md`** records settled choices with dates and reasoning. Read before
   reopening an old debate. Append when something new is settled.
-- **`.claude/skills/e3q-kernel/SKILL.md`** holds the build, Samsung-patching, KSU-LKM, SUSFS,
-  and repack procedures. Consult it for anything involving compiling, patching, packaging, or
-  flashing artifacts.
-- **Files that do not exist yet, by design.** `scripts/build.sh` and `scripts/package.sh` are
-  written in Phase 1 (they depend on FACTS §0.2); `scripts/patch-init-boot.sh` in Phase 3;
-  `docs/FLASHING.md` in Phase 2; `docs/MEASUREMENTS.md` when the first checklist runs. Their
-  absence is expected, not a bug — the CI preflight step names them explicitly. Do not stub
+- **`.claude/skills/e3q-kernel/SKILL.md`** holds the build, Samsung-patching, KSU, and repack
+  procedures. Consult it for anything involving compiling, patching, packaging, or flashing artifacts.
+- **Files created in later phases.** `scripts/build.sh`, `scripts/package.sh`, and `docs/FLASHING.md`
+  now exist (Phases 1-2); `docs/MEASUREMENTS.md` is written when the first regression checklist runs,
+  and until then its absence is expected, not a bug. (`scripts/patch-init-boot.sh` existed briefly for
+  the removed from-source KSU pipeline — `docs/DECISIONS.md 2026-08-17`.) Do not stub
   them with guessed content.
 - Do not run full kernel builds in this sandbox — insufficient disk. Builds run in GitHub
   Actions. Local work is source edits, scripts, config grepping, and log triage.

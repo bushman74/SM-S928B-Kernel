@@ -1,6 +1,6 @@
 ---
 name: e3q-kernel
-description: Build, patch, package, and flash procedure for the Samsung Galaxy S24 Ultra (SM-S928B / e3q / SM8650) 6.1 GKI kernel. Use this skill whenever the task touches compiling the kernel, choosing a toolchain or defconfig, handling vendor .ko modules, repacking boot/init_boot/vendor_boot/vendor_dlkm images, making a modified Samsung kernel bootable (SEANDROIDENFORCE, vbmeta/AVB, PROCA/RKP/KDP/DEFEX neutralization), integrating KernelSU Next in LKM mode into init_boot.img, adding SUSFS, writing or debugging the GitHub Actions build workflow, or triaging a build log or a boot failure on this device. Use it even if the request sounds like a generic "build the kernel", "add root", or "why did CI fail" — this device has non-obvious GKI 2.0, Samsung-security, and KMI constraints that generic kernel knowledge will get wrong.
+description: Build, patch, package, and flash procedure for the Samsung Galaxy S24 Ultra (SM-S928B / e3q / SM8650) 6.1 GKI kernel. Use this skill whenever the task touches compiling the kernel, choosing a toolchain or defconfig, handling vendor .ko modules, repacking boot/init_boot/vendor_boot/vendor_dlkm images, making a modified Samsung kernel bootable (SEANDROIDENFORCE, vbmeta/AVB, PROCA/RKP/KDP/DEFEX neutralization), integrating KernelSU Next (LKM) root, writing or debugging the GitHub Actions build workflow, or triaging a build log or a boot failure on this device. Use it even if the request sounds like a generic "build the kernel", "add root", or "why did CI fail" — this device has non-obvious GKI 2.0, Samsung-security, and KMI constraints that generic kernel knowledge will get wrong.
 ---
 
 # e3q kernel build & root procedure
@@ -88,6 +88,13 @@ it is *not* a model for Category A, where we have the source it lacks.
 
 ## KernelSU Next — LKM mode into init_boot.img
 
+**Status (2026-08-16): root ACHIEVED, but not via this from-source procedure.** The owner rooted the
+device by patching `init_boot` with the **KSU-Next manager** and flashing it, on BeyondROM's own
+kernel (already protections-off + module-loading — `docs/FACTS.md §0.6`). The from-source pipeline
+this section describes (build `kernelsu.ko` against our kernel, script the init_boot patch) was
+**removed as unused** (`docs/DECISIONS.md 2026-08-17`). The procedure below is kept as reference only —
+e.g. if SUSFS revives the need for a custom-kernel-integrated KSU.
+
 We build the kernel ourselves, so LKM is viable here (the usual "Knox blocks LKM" applies to
 *stock* kernels). Two things make or break it:
 
@@ -114,15 +121,12 @@ Procedure:
 Verify: flash `boot.img` (our kernel) **and** patched `init_boot.img`; KSU Next manager app
 should show the module active and grant root. Then re-run the full hardware checklist.
 
-## SUSFS (after KSU Next works)
+## SUSFS — paused
 
-Source: `https://gitlab.com/simonpunk/susfs4ksu` (GPLv3). It has two parts:
-- a **kernel-side patch** on a branch matching our KMI (look for `gki-android14-6.1` or the
-  closest tag — confirm against our exact SUBLEVEL), applied into the tree as one of our patches;
-- a **userspace/module** side that pairs with a SUSFS-aware KernelSU (KSU Next supports it).
-
-Match the susfs4ksu branch to both the KMI and the KSU Next version; a mismatch fails to apply
-or fails at runtime. Treat SUSFS as its own phase after plain KSU Next is confirmed working.
+SUSFS is **out of scope for now**: its author confirmed it is incompatible with KernelSU's LKM mode
+(a performance trade-off) and plans to revisit later. Root here is LKM, so SUSFS is dropped until
+that changes; its artifacts were removed (`docs/DECISIONS.md 2026-08-17`). If revived, it needs a
+custom-kernel-integrated KSU and the `gki-android14-6.1` susfs4ksu branch — see DECISIONS for the pin.
 
 ## Packaging
 

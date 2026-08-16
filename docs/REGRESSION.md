@@ -1,8 +1,8 @@
 # REGRESSION — the hardware/behaviour checklist run at every gate
 
-Purpose: catch **silent breakage**. Every phase that changes kernel behaviour (Phase 3
-KernelSU, Phase 4 SUSFS, and every new Samsung source drop) must re-pass this whole list on a
-real flash before it is called done. It is not a performance program — it is a guard.
+Purpose: catch **silent breakage**. Every change that touches kernel behaviour (a new root setup,
+a new Samsung source drop) must re-pass this whole list on a real flash before it is called done.
+It is not a performance program — it is a guard.
 
 **How to run it (owner, ~10 min):**
 1. Flash the new `boot.img` (+ `init_boot.img` from Phase 3 on), Magisk modules disabled for the
@@ -40,7 +40,7 @@ device hot and sluggish briefly. A userspace VPN/proxy stack (clash/protonvpn/wi
 separate, kernel-independent heat source. To attribute heat to the kernel, compare **idle,
 settled** (30+ min post-boot, same apps) against stock — not a just-booted capture.
 
-## Baseline — Build #9 (`aedaf28`, protections off, no KernelSU/SUSFS)
+## Baseline — Build #9 (`aedaf28`, protections off, no KernelSU)
 
 Recorded 2026-08-15. This is the reference every later gate is compared against.
 
