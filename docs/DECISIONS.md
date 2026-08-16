@@ -545,3 +545,40 @@ kernel (`CONFIG_KSU=m`) in CI and pass it as `--kmod`. The generic prebuilt is a
 it will very likely not load on our Samsung KMI (vermagic/CRC).
 
 **Pinned & sha256-gated in the script:** KSU-Next v3.3.0 (`f450a7f6…`), Magisk v28.1 (`8bfd3346…`).
+
+---
+
+## 2026-08-16 — Phase 4: SUSFS approach pinned + groundwork
+
+**Context:** plain KSU-Next root now works on BeyondROM's own kernel (FACTS §0.6), so the custom
+kernel's remaining unique purpose is **SUSFS**, which is a kernel patch and cannot ride a prebuilt
+kernel.
+
+**Decided:**
+1. **Pin susfs4ksu** to branch `gki-android14-6.1` (our exact KMI) @ commit
+   `e287d59066380bf6de4396532d4a42edf4408701`.
+2. **Vendor** the kernel-side artifacts into `patches/susfs/` rather than fetch from GitLab at build
+   time. GitLab *is* reachable through the sandbox/CI proxy (`git ls-remote` and `clone` both
+   succeed), so this is for reproducibility + version-pinning, not because retrieval is blocked.
+   Answers the owner's "GitLab retrieval / stable solution" concern: the build sees a fixed local
+   copy.
+3. **Userspace side stays a packaging artifact** (`ksu_module_susfs`, `ksu_susfs`), not vendored —
+   pulled at package time like ksud/magiskboot.
+
+**De-risked (dry-run 2026-08-16):** the 114-hunk kernel patch applies **111/114** to our Samsung
+6.1.145 tree; only 3 hunks fail (fs/namespace.c #1+#8, fs/proc/base.c #1), two of them trivial
+`#include` drift. So SUSFS is genuinely adaptable to this tree — no deep conflicts.
+
+**Open questions to resolve before build-integrating (in `patches/susfs/README.md`):**
+- KSU-Next vs weishu KSU: use KSU-Next's native `CONFIG_KSU_SUSFS` rather than the weishu-targeted
+  `10_enable_susfs_for_ksu.patch`; confirm the susfs version KSU-Next v3.3.0 expects.
+- Built-in KSU (`CONFIG_KSU=y`, inline hooks — SUSFS ≥ v2.0.0 dropped kprobes) vs the current LKM
+  mode. SUSFS likely wants built-in KSU; confirm KSU-Next's supported combination.
+- Must **delete `android/abi_gki_protected_exports_{aarch64,x86_64}`** or GKI ABI protection blocks
+  the new exports and Wi-Fi-class modules fail (upstream step 11).
+
+**Critical-path consequence:** SUSFS needs our custom kernel, so the open audio regression
+(FACTS §0.3.2) is back on the path and must be resolved (or accepted) for a daily-usable SUSFS build.
+
+**Would change our mind:** if the 3-hunk adaptation turns out to hide deeper conflicts once building,
+or if KSU-Next's SUSFS support requires a different susfs branch/version, revisit the pin.
