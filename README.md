@@ -6,10 +6,13 @@ as little as possible to boot on a custom ROM — then, in later phases, root vi
 **unmodified** source, add only a small, reviewable patch series, and never claim something works
 until it has been flashed and checked on the actual device.
 
-> **Status — Phase 1, not yet device-verified.** Samsung's source compiles cleanly in CI with the
-> six boot-blocking Samsung protections turned off (verified *off* in the built binary, 400 vendor
-> modules built), and is packaged into a flashable AnyKernel3 zip. **It has not yet been booted on
-> hardware.** "Compiles" is not "boots" — the first on-device test is the current milestone.
+> **Status — Phases 1–2 device-verified · KernelSU Next root working · SUSFS (Phase 4) in progress.**
+> The self-built kernel (Build #9, the six Samsung protections off) **boots on hardware with all
+> hardware working — Wi-Fi, Bluetooth, mobile data, S-Pen, camera, fingerprint, and audio** (see
+> `docs/FACTS.md` §0.3.2). A tested flash/rollback procedure and a regression baseline are in place.
+> **KernelSU Next root works on the device** (via a manager-patched `init_boot`; the from-source LKM
+> packaging in `scripts/patch-init-boot.sh` is also built and validated end-to-end). Current work is
+> **SUSFS**, whose kernel patch is vendored and pinned in `patches/susfs/`.
 
 This repository is a work log as much as a kernel tree: every change is a small commit with its
 reasoning, so a boot failure can be bisected to one decision. If you are reading it to learn how a
@@ -137,10 +140,10 @@ longer applies is treated as a signal to investigate, not to force.
 
 | Phase | Goal | State |
 |---|---|---|
-| **1** | Reproducible build of Samsung's source that boots with all hardware working (protections off, otherwise unmodified). | **In progress** — builds and packages in CI; first on-device boot pending. |
-| **2** | Reproducibility hardening; a tested flash/rollback procedure. | Pending Phase 1. |
-| **3** | KernelSU Next (LKM) patched into `init_boot.img`. | Pending. |
-| **4** | SUSFS on top of a working KernelSU Next. | Pending. |
+| **1** | Reproducible build of Samsung's source that boots with all hardware working (protections off, otherwise unmodified). | **Done — device-verified.** Build #9 boots; all hardware works, audio included (FACTS §0.3.2). |
+| **2** | Reproducibility hardening; a tested flash/rollback procedure. | **Done.** `docs/FLASHING.md` written + rollback tested; regression baseline in `docs/REGRESSION.md`. |
+| **3** | KernelSU Next root in `init_boot.img`. | **Done — root working.** Achieved via a KSU-Next-manager-patched `init_boot`; the from-source LKM pipeline (`scripts/patch-init-boot.sh`) is built and validated. |
+| **4** | SUSFS on top of KernelSU Next. | **In progress** — susfs4ksu pinned + vendored (`patches/susfs/`); kernel patch applies 111/114 to our tree. |
 
 Each phase has an **exit gate that requires a real flash on real hardware** — see
 [`docs/PLAN.md`](docs/PLAN.md) for the gates and the per-phase checklist.

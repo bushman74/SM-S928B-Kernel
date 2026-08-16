@@ -57,24 +57,32 @@ minimum required to make a *self-built* kernel boot on **this** device.
       stock boot.img through the footer. The CI-produced artifact from a fresh build is the
       next trigger — build #4.)*
 - [x] `.github/workflows/build.yml` green (manual trigger)
-- [ ] Owner flashes the result
+- [x] Owner flashes the result *(done: Build #9 — boots, all hardware working incl. audio)*
 
 **Exit gate:** device boots on a self-built kernel (protections off, otherwise unmodified), with
 **Wi-Fi, Bluetooth, mobile data, S-Pen, camera, and fingerprint all working**. Owner confirms
 each. Commit `Verified: boots+all-hw`. Do not proceed on a partial pass — "boots but no
 Bluetooth" means the module pipeline is wrong and every later phase inherits the bug.
 
+**Status: MET (Build #9).** Boots + Wi-Fi/BT/mobile-data/S-Pen/camera/fingerprint **and audio**
+confirmed on hardware (`docs/FACTS.md` §0.3.2; baseline in `docs/REGRESSION.md`).
+
 ---
 
 ## Phase 2 — Reproducibility hardening
 
-- [ ] Build twice from a clean checkout; confirm identical (or explainably different) output
-- [ ] ccache working in CI; build time recorded
-- [ ] `docs/FLASHING.md` written, including the rollback procedure and vbmeta steps; tested
-      once by deliberately flashing back to stock
-- [ ] Capture a baseline for the regression checklist (Phase 5) before any behavioural change
+- [~] Build twice from a clean checkout; confirm identical output *(reproducibility timestamps
+      pinned in the workflow; full double-build diff not yet re-run)*
+- [x] ccache working in CI; build time recorded *(configured in `build.yml`)*
+- [x] `docs/FLASHING.md` written, including the rollback procedure and vbmeta steps; tested
+      once by deliberately flashing back to stock *(done: owner's stock A/B was exactly this)*
+- [x] Capture a baseline for the regression checklist (Phase 5) before any behavioural change
+      *(done: `docs/REGRESSION.md`, Build #9)*
 
 **Exit gate:** owner can flash, break, and recover without assistance.
+
+**Status: MET.** Owner has flashed, reverted to stock, and re-flashed unaided (the stock A/B that
+tested `FLASHING.md`).
 
 ---
 
@@ -84,34 +92,52 @@ This is the core of the project. Order matters: the kernel must first boot modif
 already disables the boot-blocking protections) and be able to load an out-of-tree module,
 *then* the LKM goes into init_boot.
 
+**Status: root ACHIEVED (2026-08-16) — exit gate MET, via a route we didn't originally plan.** The
+owner reached working KernelSU-Next root by patching `init_boot` with the KSU-Next **manager** and
+flashing it, running on **BeyondROM's own kernel** — which already ships the six protections off +
+module loading (`FACTS §0.6`, config dump: `KPROBES=y`, no `MODULE_SIG_*`, no UH/RKP/KDP/DEFEX/
+PROCA/FIVE). So **plain root did not need our custom kernel.** The generic `android14-6.1` module
+loaded (modversions ignores the sublevel gap); `/proc/modules` shows `kernelsu … Live`, SELinux
+Enforcing, no crashes (one minor bug: the manager's in-app *Reboot* seccomp-crashes ksud on
+Android 16 — use the power menu). The from-source pieces below matter now only for the Phase-4
+SUSFS build, where a custom kernel *is* required.
+
 - [x] Kprobes already enabled by Samsung (`CONFIG_KPROBES=y`, `FACTS §0.5`) — no patch needed.
-- [ ] The Samsung boot-blocking protections (UH/RKP/KDP, DEFEX, PROCA, FIVE) are **already
-      neutralized in Phase 1** (a self-built kernel can't boot on this device otherwise). Here,
-      only address anything that specifically blocks *module loading* if the LKM is rejected —
-      chiefly verify `MODULE_SIG_PROTECT=y` does not reject the unsigned `kernelsu.ko`
-      (`MODULE_SIG_FORCE` is not set, so it should load). If a targeted C patch is needed, one
-      per commit (skill Category A: defconfig → C patch → image patch as last resort).
+- [x] `MODULE_SIG_PROTECT` off so the unsigned `kernelsu.ko` can load *(done: protection #7; the
+      boot-blocking protections were already neutralized in Phase 1)*
 - [ ] Add KernelSU Next to the tree (pinned tag); build `kernelsu.ko` **against our kernel**
-- [ ] `scripts/patch-init-boot.sh` — install the LKM into `init_boot.img` (unpack ramdisk,
-      inject ksud + the KMI-matched `.ko`, repack with matching compression, re-apply
-      SEANDROIDENFORCE)
-- [ ] Add `kernelsu` input to the workflow so CI emits a patched `init_boot.img` artifact
-- [ ] Owner flashes `boot.img` + patched `init_boot.img`
+      *(deferred to Phase 4 — plain root used the manager's module on BeyondROM's kernel; this
+      in-tree `CONFIG_KSU=m` build is only needed for the custom-kernel SUSFS image)*
+- [x] `scripts/patch-init-boot.sh` — restore the stock ramdisk + `ksud boot-patch` the LKM into
+      `init_boot.img` *(done: PR #31, validated end-to-end against the real image)*
+- [~] Add `kernelsu` input to the workflow *(the input exists in `build.yml`; the `package.sh`
+      wiring that calls `patch-init-boot.sh` is a Phase-4 step)*
+- [x] Owner flashes a patched `init_boot.img` *(done via the KSU-Next manager on BeyondROM's kernel,
+      not our `boot.img` — see Status above)*
 
 **Exit gate:** KSU Next manager shows the module active and grants root, **and** the full
 hardware checklist from Phase 1 still passes. Re-verify every item — this is where
-regressions hide.
+regressions hide. **→ MET 2026-08-16** (manager shows `KernelSU: 33214`, LKM active, root granted,
+hardware unaffected).
 
 ---
 
 ## Phase 4 — SUSFS
 
-- [ ] Select the susfs4ksu branch matching our KMI and KSU Next version
-- [ ] Apply the SUSFS kernel patch as one of our patches; resolve fallout in-tree
-- [ ] Rebuild kernel + KSU `.ko`; repack init_boot with the SUSFS-aware setup
+- [x] Select the susfs4ksu branch matching our KMI *(done: `gki-android14-6.1`, pinned commit
+      `e287d590`, vendored in `patches/susfs/`)*
+- [~] Apply the SUSFS kernel patch as one of our patches; resolve fallout in-tree *(dry-run applies
+      111/114 hunks to our tree; 3 hunks in `fs/namespace.c` + `fs/proc/base.c` to adapt — not yet
+      wired into `build.sh`)*
+- [ ] Resolve KSU-Next's SUSFS mode (native `CONFIG_KSU_SUSFS`; built-in vs LKM), enable it, rebuild
+      the custom kernel + repack `init_boot`; delete `android/abi_gki_protected_exports_*`
 - [ ] Owner flashes and verifies SUSFS features via the manager / `ksu_susfs`
 
 **Exit gate:** SUSFS active, root works, hardware checklist still passes.
+
+**Status: groundwork done (2026-08-16).** Pinned + vendored; patch de-risked against our tree; open
+questions recorded in `patches/susfs/README.md`. Needs the custom kernel (Build #9 — a known-good,
+all-hardware-working base; **no** audio blocker).
 
 ---
 
