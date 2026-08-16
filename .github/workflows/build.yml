@@ -15,16 +15,6 @@ on:
         default: none
         type: choice
         options: [none, thin, full]
-      kernelsu:
-        description: "Also build kernelsu.ko against this kernel and emit a patched init_boot.img (LKM mode)"
-        required: true
-        default: false
-        type: boolean
-      susfs:
-        description: "Apply SUSFS (requires kernelsu=true and the SUSFS kernel patch in patches/)"
-        required: false
-        default: false
-        type: boolean
       clean:
         description: "Ignore ccache and build from scratch"
         required: false
@@ -42,14 +32,6 @@ jobs:
     timeout-minutes: 350
 
     steps:
-      # Fail fast on impossible input combinations before spending an hour building.
-      - name: Validate inputs
-        run: |
-          if [[ "${{ inputs.susfs }}" == "true" && "${{ inputs.kernelsu }}" != "true" ]]; then
-            echo "::error::susfs=true requires kernelsu=true — SUSFS pairs with a SUSFS-aware KernelSU."
-            exit 1
-          fi
-
       # MUST be early. Runners ship with ~14 GB usable of a ~72 GB volume; a Kleaf
       # build wants far more. This reclaims roughly 30 GB.
       # Pinned to a tag on purpose: @main is mutable and would change under us mid-project.
@@ -149,8 +131,6 @@ jobs:
       - name: Build
         env:
           LTO_MODE: ${{ inputs.lto }}
-          WITH_KERNELSU: ${{ inputs.kernelsu }}
-          WITH_SUSFS: ${{ inputs.susfs }}
           # Phase 2 requires two clean builds to match. Without these pinned, the
           # timestamp/user/host baked into the image differ on every run and the
           # comparison is meaningless.
@@ -160,14 +140,9 @@ jobs:
         run: ./scripts/build.sh
 
       - name: Package
-        env:
-          WITH_KERNELSU: ${{ inputs.kernelsu }}
-          WITH_SUSFS: ${{ inputs.susfs }}
         run: ./scripts/package.sh
         # package.sh handles the partition-level steps only (SEANDROIDENFORCE footer, vbmeta,
         # ramdisk compression). Security-protection neutralization is done in source, not here.
-        # When WITH_KERNELSU is true it builds kernelsu.ko against this kernel and emits a
-        # patched init_boot.img.
 
       - name: ccache stats
         if: always()

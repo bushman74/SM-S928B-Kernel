@@ -29,9 +29,6 @@
 # have no signing key and none is needed). The --disable-verity/--disable-verification
 # vbmeta guidance is printed below as a safety net and detailed in docs/FLASHING.md (Phase 2).
 #
-# Env:
-#   WITH_KERNELSU / WITH_SUSFS  consumed in later phases (Phase 3/4); acknowledged, not used here.
-#
 # STATUS: first real version. Cannot be exercised in the dev sandbox (no build output here);
 # the CI run that follows scripts/build.sh is its verification. The self-check below re-parses
 # the boot.img we just wrote and fails the job if any field drifts from the stock recipe.

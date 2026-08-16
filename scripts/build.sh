@@ -10,7 +10,6 @@
 #
 # Env (set by .github/workflows/build.yml):
 #   LTO_MODE   none|thin|full  (default none — stock e3q is built LTO_NONE; see docs/FACTS.md §0.5)
-#   WITH_KERNELSU / WITH_SUSFS consumed in later phases; ignored here
 #   KBUILD_BUILD_TIMESTAMP/USER/HOST  reproducibility, honored by kbuild if exported
 #
 # STATUS: first version. It cannot be run in the dev sandbox (no disk/time for a full
@@ -64,9 +63,9 @@ fi
 echo "==> Staging bootable artifacts into $DIST_DIR (skipping vmlinux/debug)"
 # init_boot.img is intentionally NOT staged: the Kleaf build does not emit one. The generic ramdisk
 # it would wrap is a prebuilt Samsung does not ship — get_gki_ramdisk_prebuilt_binary() returns None
-# (msm-kernel/msm_kernel_extensions.bzl), so there is nothing to build init_boot from. The rooted
-# init_boot is produced from the device's OWN init_boot image by scripts/patch-init-boot.sh (restore
-# + ksud boot-patch), not by the compiler. Do not re-add init_boot.img here expecting a build output.
+# (msm-kernel/msm_kernel_extensions.bzl), so there is nothing to build init_boot from. Root on this
+# device is delivered separately — by patching init_boot on-device with the KernelSU-Next manager —
+# not by the compiler. Do not re-add init_boot.img here expecting a build output.
 while IFS= read -r pat; do
   find "$SRC" -maxdepth 2 -name "$pat" -exec cp -a {} "$DIST_DIR/" \; 2>/dev/null || true
 done <<'PATS'
