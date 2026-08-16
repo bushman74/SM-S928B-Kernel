@@ -30,10 +30,11 @@ ground truth); fix the handbook to match.
 We are building a custom Android **kernel** for the Samsung Galaxy S24 Ultra (model
 **SM-S928B**, codename **e3q**, SoC **Qualcomm SM8650 / Snapdragon 8 Gen 3**, Qualcomm target
 name **pineapple**). The end goal, in strict priority order, is: (1) a **reproducible build of
-Samsung's own source that boots with all hardware working**; then (2) **KernelSU Next** root in
-"LKM" mode patched into `init_boot.img`, plus the Samsung/Knox neutralization required to boot a
-self-built kernel and load the root module; then (3) **SUSFS** on top. Goal 1 gates everything —
-there is no point starting 2 or 3 until 1 is boringly reliable.
+Samsung's own source that boots with all hardware working**; then (2) **KernelSU Next** root; then
+(3) **SUSFS** on top. Where they landed: goal 1 is **done** (Build #9, device-verified); goal 2
+(root) was **achieved on-device** by patching `init_boot` with the KSU-Next manager on the ROM's
+existing kernel — no custom-kernel change needed; goal 3 (SUSFS) is **paused** (incompatible with
+KernelSU LKM mode for now — see §9 and `DECISIONS.md 2026-08-17`).
 
 The device is bootloader-unlocked, running a custom ROM (**BeyondROM 5.0**, firmware base
 **DZDP**), and already rooted (with Magisk Alpha, which the owner will remove). No warranty/Knox
@@ -64,9 +65,8 @@ warnings are needed.
 generation **`android14-6.1`**. "android14-6.1" is a **GKI KMI generation label**, not the
 platform version — Google freezes a kernel ABI ("KMI") for a generation and carries it across
 several Android releases. So an Android 16 phone legitimately runs an `android14-6.1` kernel.
-This matters because tools that key off the KMI (notably **SUSFS**, whose branch is
-`gki-android14-6.1`) must use the *kernel* label, not the platform version. Recorded in
-`DECISIONS.md 2026-08-12`.
+This matters because tools that key off the KMI (KernelSU modules, GKI module ABI) must use the
+*kernel* label, not the platform version. Recorded in `DECISIONS.md 2026-08-12`.
 
 ---
 
@@ -95,8 +95,7 @@ symlinks. Everything else is byte-for-byte Samsung. Archive SHA256:
 `512c0a0b74646ddbb64ac8adea7c396c90458c2c12cf7f437e9d20282a33fa3c`.
 
 Files intentionally **absent by design** (created in later phases, their absence is not a bug):
-`docs/MEASUREMENTS.md` (first checklist run), `scripts/patch-init-boot.sh` (Phase 3, KernelSU LKM
-injection). (`docs/FLASHING.md` now exists — written alongside the first flashable build.) The CI preflight names the
+`docs/MEASUREMENTS.md` (first checklist run). (`docs/FLASHING.md` now exists — written alongside the first flashable build.) The CI preflight names the
 scripts it expects, so a missing one fails loudly rather than silently.
 
 ---
@@ -239,7 +238,7 @@ That is the minimal, lowest-risk first flash; the full module rebuild/repack com
 |---|---|
 | Boot header version | **v4** (`build.config.msm.pineapple:13`) |
 | `boot.img` | kernel `Image` only (no ramdisk) |
-| `init_boot.img` | the generic ramdisk (first-stage init) — this is where KernelSU's LKM will be injected (Phase 3) |
+| `init_boot.img` | the generic ramdisk (first-stage init) — where KernelSU's LKM lives (injected on-device by the KSU-Next manager) |
 | `vendor_boot.img` | vendor ramdisk + first-stage vendor modules |
 | `vendor_dlkm` | second-stage vendor modules (lives inside `super`) |
 | Ramdisk compression | Kleaf default **`lz4`** (`build/kernel/_setup_env.sh`); confirm against the stock image when we first repack |
@@ -278,15 +277,18 @@ remove the mechanism cleanly and visibly in `git log`.
 
 ---
 
-## 9. The root and SUSFS plan
+## 9. Root (and why SUSFS is paused)
 
 - **KernelSU *Next*** (`github.com/KernelSU-Next/KernelSU-Next`), **not** upstream KernelSU, in
-  **LKM mode**: root ships as a loadable `.ko` injected into `init_boot.img`, keeping root
-  updatable without a kernel rebuild. Viable here because `CONFIG_KPROBES=y` already (LKM hooks via
-  kprobes) and module signing is not forced. Fallback if the LKM proves impractical on the Samsung
-  KMI: KSU Next *built-in* (source-hooked) integration. See `DECISIONS.md 2026-08-11/12`.
-- **SUSFS** (`gitlab.com/simonpunk/susfs4ksu`), branch **`gki-android14-6.1`** (keyed off the KMI,
-  §2), applied as a kernel patch after plain KSU Next is confirmed working (Phase 4).
+  **LKM mode**: root is a loadable `.ko` injected into `init_boot.img`, keeping root updatable
+  without a kernel rebuild. **Achieved** (2026-08-16) by patching `init_boot` with the KSU-Next
+  manager and flashing it — running on **BeyondROM's own kernel**, which already has `KPROBES=y`,
+  module signing off, and the Samsung protections off (`FACTS §0.6`). So root needed **no**
+  custom-kernel change, and the from-source KSU pipeline we had built (in-tree `.ko` +
+  `patch-init-boot.sh` + a `kernelsu` workflow input) was removed as unused (`DECISIONS.md 2026-08-17`).
+- **SUSFS** — **paused.** Its author confirmed SUSFS is incompatible with KernelSU's LKM mode for
+  now (a performance trade-off) and will revisit later. Since root here is LKM, SUSFS is dropped
+  from scope until that changes; all its artifacts were removed (`DECISIONS.md 2026-08-17`).
 
 ---
 
@@ -295,7 +297,7 @@ remove the mechanism cleanly and visibly in `git log`.
 **Everything builds in GitHub Actions**, never in the dev sandbox (insufficient disk). The
 workflow is **manual-trigger only** (`workflow_dispatch`) by design — CI minutes and disk are
 never spent automatically. Inputs: `toolchain` (default `reference` → clang `r487747c`), `lto`
-(`none|thin|full`), `kernelsu`, `susfs`, `clean`.
+(`none|thin|full`), `clean`.
 
 Job outline (`.github/workflows/build.yml`): free disk → checkout → **preflight** (the three
 scripts must exist and be executable) → install deps → restore ccache + **prebuilts cache** →
@@ -346,7 +348,7 @@ Settled model (`DECISIONS.md 2026-08-12`):
 - **`main`** — `vanilla` content + everything of ours (scaffolding, docs, scripts, CI, patches).
   **This is the branch CI builds.**
 - **Task branches** — each unit of work on its own short-lived `task/<name>` branch → PR → merge
-  into `main`. Build *variants* (toolchain, LTO, KernelSU on/off, SUSFS on/off) are **workflow
+  into `main`. Build *variants* (toolchain, LTO) are **workflow
   inputs**, not branches.
 
 Merged PRs so far, all into `main`: #1 (Phase-0 + source import), #2 (prebuilts fetch), #3 (build
@@ -396,11 +398,11 @@ Phases are sequential; each has an **exit gate that requires a real flash on rea
 | Phase | Goal | Exit gate | Status |
 |---|---|---|---|
 | 0 — Discovery | Know the tree with zero assumptions | Owner reads `FACTS.md`; no `TBD` in blocking fields | ✅ **done** |
-| 1 — Reproducible stock build that boots | Compile Samsung source; boot with all hardware working | Device boots; Wi-Fi/BT/data/S-Pen/camera/fingerprint all confirmed | 🔧 **in progress** — kernel **compiles green** (CI run #2). Remaining: disable the Samsung boot-blocking protections (moved here from Phase 3 — see §8), LTO→thin, real packaging, owner flash+verify. |
-| 2 — Reproducibility hardening | Deterministic builds; documented flash+rollback | Owner can flash, break, and recover unaided | ⏳ pending |
-| 3 — Protection neutralization + KernelSU Next (LKM) | Boot a modified kernel; load the root LKM | KSU Next shows active + grants root; full hardware checklist still passes | ⏳ pending |
-| 4 — SUSFS | SUSFS on a working KSU Next | SUSFS active; root works; hardware checklist passes | ⏳ pending |
-| 5 — Regression checklist | Guard against silent breakage at every gate | Recorded per commit SHA | ⏳ set up in Phase 2 |
+| 1 — Reproducible stock build that boots | Compile Samsung source; boot with all hardware working | Device boots; Wi-Fi/BT/data/S-Pen/camera/fingerprint all confirmed | ✅ **done** — Build #9 boots with all hardware working, audio included (`FACTS §0.3.2`). |
+| 2 — Reproducibility hardening | Deterministic builds; documented flash+rollback | Owner can flash, break, and recover unaided | ✅ **done** — `FLASHING.md` + rollback tested; regression baseline captured. |
+| 3 — KernelSU Next root | Root on the device | KSU Next shows active + grants root; hardware checklist passes | ✅ **done** — via the KSU-Next manager on BeyondROM's kernel (no custom-kernel change). |
+| 4 — SUSFS | SUSFS on a working KSU Next | SUSFS active; root works; hardware checklist passes | ⏸ **paused** — incompatible with KernelSU LKM mode for now (`DECISIONS.md 2026-08-17`). |
+| 5 — Regression checklist | Guard against silent breakage at every gate | Recorded per commit SHA | ✅ **set up** — `REGRESSION.md`, Build #9 baseline. |
 
 **Explicitly out of scope** (reopen only via a new `DECISIONS.md` entry): Qualcomm CLO
 backporting; AutoFDO; kernel version bumps beyond the LTS SUBLEVEL.
@@ -413,7 +415,7 @@ You do not build locally (no disk); this is what CI does, and how to run it by h
 GitHub Actions tab:
 
 1. **Actions → "Build kernel" → Run workflow**, on `main`, with inputs (first known-good:
-   `toolchain=reference`, `lto=none`, `kernelsu=false`, `susfs=false`, `clean=false`).
+   `toolchain=reference`, `lto=none`, `clean=false`).
 2. CI: frees disk → checks out the repo → runs `scripts/setup-toolchain.sh reference` (fetches
    `prebuilts/` per §5, ~6 GB, then cached) → `scripts/build.sh`
    (`build_with_bazel.py -t pineapple gki --skip abl --lto=none`) → `scripts/package.sh`.

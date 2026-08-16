@@ -14,7 +14,7 @@ Evidence convention: paths below are relative to the extracted kernel root
 > "Android 14 KMI". This archive is an **Android 16 / One UI 8** firmware (archive name
 > `..._16_...`; `README_Platform.txt` says "version info - Android 16.0"). The **GKI kernel is
 > still 6.1 with KMI `android14-6.1`** (see §0.2, §0.6) — that string is a KMI generation, not
-> the platform Android version, and it is what SUSFS branch selection keys on. Nothing about the
+> the platform Android version. Nothing about the
 > plan breaks; the "Android 14" wording in the docs is just imprecise. Suggest a one-line
 > `DECISIONS.md` note so it isn't re-litigated.
 
@@ -417,7 +417,7 @@ optional. The workflow caches `kernel_platform/prebuilts/` so the ~6 GB fetch is
 | SEANDROIDENFORCE footer present on stock images? | **`boot.img`: YES** — the literal `SEANDROIDENFORCE` string is appended right after the kernel (at byte 38,010,880 of the owner's stock `boot.img`). **`init_boot.img` / `vendor_boot.img`: NO.** So our repacked `boot.img` **must** re-append `SEANDROIDENFORCE`; our repacked `init_boot` (Phase 3) does not need it. Not in kernel source (a packaging/Category-B step). |
 | vbmeta / AVB: what must be disabled to boot a modified image | Source signs `boot.img` via `avbtool add_hash_footer --algorithm SHA256_RSA4096 --partition_name boot` (`msm-kernel/avb_boot_img.bzl`). **Owner-confirmed: the current ROM already ships a patched/disabled vbmeta**, so a self-built `boot`+`init_boot` boots without an extra AVB step — *provided a stock `vbmeta` is never re-flashed over it*. `scripts/package.sh`/`FLASHING.md` will still emit the `--disable-verity --disable-verification` vbmeta guidance as the safety net. *(resolved)* |
 | Does the current custom ROM already disable verity/verification? | **YES** — BeyondROM 5.0 (DZDP) ships with vbmeta already patched (owner-confirmed). *(resolved)* |
-| KMI / Android version string | **`android14-6.1`** (`common/build.config.constants:1` and `msm-kernel/build.config.constants:1`, `BRANCH=android14-6.1`). This is the SUSFS branch key → target `susfs4ksu` branch `gki-android14-6.1`. (Platform is Android 16, but the KMI generation is android14-6.1.) *(needed for SUSFS branch match — resolved)* |
+| KMI / Android version string | **`android14-6.1`** (`common/build.config.constants:1` and `msm-kernel/build.config.constants:1`, `BRANCH=android14-6.1`). The KMI generation GKI module-ABI compatibility keys on. (Platform is Android 16, but the KMI generation is android14-6.1.) *(resolved)* |
 
 **Our `boot.img` rebuild recipe (from parsing the owner's stock images, `BeyondROM_images/`):** the stock
 `boot.img` is header **v4**, kernel-only (`ramdisk_size=0`), `os_version 14.0.0`, `os_patch_level 2026-04`,
@@ -442,8 +442,7 @@ but **retains an intact embedded `.backup/`**:
 So the clean generic ramdisk is reconstructable **from the owner's image** via `magiskboot cpio ramdisk.cpio
 restore` (restore original `init`, drop `overlay.d`, drop `.backup`). The Phase-3 KSU base therefore needs
 **no** official-firmware download; the Samsung AP-tar `init_boot.img.lz4` is only a fallback for a future image
-that lacks the backup. `scripts/patch-init-boot.sh` must branch on backup presence (restore-or-fail) rather
-than assume a clean input.
+that lacks the backup.
 
 **`/data` encryption is disabled at the VENDOR level, not by Magisk — so switching Magisk→KSU will NOT
 re-encrypt (no wipe risk).** Verified 2026-08-15 from the owner's running device. The disable is persistent,
@@ -479,8 +478,9 @@ flashed via TWRP, and booted (2026-08-16). Verified from the KSU bugreport:
   the power-menu reboot. A KSU-Next × Android-16 seccomp quirk, expected to be fixed upstream.
 
 **Implication for the project's critical path:** basic KSU root no longer requires our custom kernel — it works
-on the daily-driver BeyondROM kernel today. Our custom-kernel build (Phase 1-3) retains unique value only for
-**SUSFS** (Phase 4), which needs a kernel-side patch that cannot be applied to the already-built BeyondROM kernel.
+on the daily-driver BeyondROM kernel today. SUSFS, the one goal that would have needed our own kernel, is paused
+(its author confirmed it is incompatible with KernelSU LKM mode for now — `DECISIONS.md` 2026-08-17). So the
+from-source kernel stands as a complete, device-verified result with no active build task open against it.
 
 **Full stock `boot.img` trailer, and why we reproduce only the first part.** Parsing the whole stock
 partition (not just the SEANDROIDENFORCE offset) shows three appended blocks after the page-aligned kernel:
