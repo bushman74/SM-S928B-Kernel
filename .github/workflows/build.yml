@@ -58,7 +58,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 1
           submodules: recursive
@@ -98,7 +98,7 @@ jobs:
 
       - name: Restore ccache
         if: ${{ inputs.clean == false }}
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.ccache
           # 10 GB repo-wide cache limit, evicted after 7 days unused.
@@ -120,7 +120,7 @@ jobs:
       # idempotent, so on a cache hit it just verifies and returns.
       - name: Restore prebuilts
         if: ${{ inputs.clean == false }}
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: kernel_platform/prebuilts
           key: prebuilts-${{ inputs.toolchain }}-${{ hashFiles('scripts/setup-toolchain.sh') }}
@@ -152,32 +152,85 @@ jobs:
         if: always()
         run: df -h /
 
-      # Upload ONLY the files the owner should actually flash, plus the modules zip for
-      # reference. Deliberately NOT `out/dist/*.img`: build.sh stages many images
-      # (vendor_boot.img, vendor_dlkm.img ~282 MB, system_dlkm*.img, dtb/dtbo) that are build
-      # byproducts and must not be flashed for the boot.img-only first-boot test — shipping them
-      # in the artifact is a footgun and bloats it. See docs/FLASHING.md.
-      - name: Upload flashable artifacts
+      # Upload each flashable artifact SEPARATELY, in its native extension — no wrapping ZIP.
+      # upload-artifact@v7 with `archive: false` uploads ONE file as-is and names the artifact
+      # after that file (the `name:` input is ignored), so the run's artifacts download directly
+      # as `boot.img`, `e3q-kernel-<date>-AK3.zip`, etc. — not a zip-of-files — and the already
+      # zipped AK3/modules are NOT re-zipped (the "double-zip" the changelog calls out).
+      #
+      # Deliberately NOT `out/dist/*.img`: build.sh stages many byproduct images (vendor_boot,
+      # vendor_dlkm ~282 MB, system_dlkm, dtb/dtbo) that must not be flashed for the boot.img-only
+      # first boot — shipping them is a footgun and bloats the run. See docs/FLASHING.md.
+      #
+      # `archive: false` takes exactly one file, so resolve the date-stamped zip names to literal
+      # paths here (asserting at most one of each) instead of relying on a wildcard under archive:false.
+      - name: Resolve date-stamped artifact paths
         if: success()
-        uses: actions/upload-artifact@v4
+        id: artifacts
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          ak3=( out/dist/e3q-kernel-*-AK3.zip )
+          mods=( out/dist/e3q-modules-*.zip )
+          if [ "${#ak3[@]}" -gt 1 ]; then
+            echo "::error::expected at most 1 AnyKernel3 zip in out/dist, found ${#ak3[@]}: ${ak3[*]}"; exit 1
+          elif [ "${#ak3[@]}" -eq 1 ]; then
+            echo "ak3=${ak3[0]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::no AnyKernel3 zip found in out/dist"
+          fi
+          if [ "${#mods[@]}" -gt 1 ]; then
+            echo "::error::expected at most 1 modules zip in out/dist, found ${#mods[@]}: ${mods[*]}"; exit 1
+          elif [ "${#mods[@]}" -eq 1 ]; then
+            echo "modules=${mods[0]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::no modules zip found in out/dist"
+          fi
+
+      - name: Upload boot.img (native)
+        if: success()
+        uses: actions/upload-artifact@v7
         with:
-          name: e3q-kernel-${{ github.sha }}
-          path: |
-            out/dist/e3q-kernel-*-AK3.zip
-            out/dist/boot.img
-            out/dist/boot.tar.md5
-            out/dist/e3q-modules-*.zip
+          path: out/dist/boot.img
+          archive: false
           retention-days: 30
           if-no-files-found: error
 
-      # Build logs are the thing you actually need when it fails. Keep them always.
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Upload AnyKernel3 zip (native)
+        if: ${{ success() && steps.artifacts.outputs.ak3 != '' }}
+        uses: actions/upload-artifact@v7
         with:
-          name: logs-${{ github.sha }}
-          path: |
-            out/**/*.log
-            out/build.log
+          path: ${{ steps.artifacts.outputs.ak3 }}
+          archive: false
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload Odin boot.tar.md5 (native)
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/dist/boot.tar.md5
+          archive: false
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload modules zip (native)
+        if: ${{ success() && steps.artifacts.outputs.modules != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.artifacts.outputs.modules }}
+          archive: false
+          retention-days: 30
+          if-no-files-found: warn
+
+      # The build log is the comprehensive tee'd output of the whole build — upload it native
+      # (single file, no ZIP). `archive: false` is one file per artifact, so we ship build.log
+      # itself rather than a zipped bundle of the log tree; `always()` so it survives a failed build.
+      - name: Upload build log (native)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/build.log
+          archive: false
           retention-days: 30
           if-no-files-found: warn

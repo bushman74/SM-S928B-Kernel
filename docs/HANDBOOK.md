@@ -327,12 +327,19 @@ fetch. Each failure prints a specific, greppable message naming what and where.
 | #1 | `8589ece` | none | ❌ bazel analysis | missing `prebuilts/gcc` sysroot → `hermetic_tools_toolchain` unregistered. Fixed by fetching the gcc prebuilt + `--skip abl`. |
 | #2 | `4364877` | none | ✅ green | Kernel + modules compiled (~52 min). Produced a 436 MB kernel+modules artifact (not yet flashable). Prebuilts cache saved for future runs. |
 
-**A note on the "Node.js 20 is deprecated" CI warning:** it is **cosmetic and harmless**. GitHub is
-migrating the JavaScript runtime that *actions themselves* run on (checkout/cache/upload-artifact)
-from Node 20 to Node 24; the runner already forces them onto Node 24 and they run fine. It has
-**nothing** to do with the kernel, the compiler, or build correctness, and does not affect
-stability or success. No action is required; it resolves itself as those actions publish
-Node-24-native releases.
+**Node.js runtime for actions (Node 20 → 24).** GitHub is retiring the Node 20 runtime that
+*actions themselves* run on (runners default to Node 24 on 2026-06-16, per the 2025-09-19
+changelog). The workflow is pinned to the Node-24-native releases: `actions/checkout@v5`,
+`actions/cache@v5`, and `actions/upload-artifact@v7` all declare `runs.using: node24`;
+`jlumbroso/free-disk-space@v1.3.1` is a **composite** (shell) action, so the Node runtime doesn't
+apply to it. Unrelated to the kernel, the compiler, or build correctness.
+
+**Artifacts are uploaded un-zipped.** Each flashable file is uploaded as its own artifact via
+`upload-artifact@v7` with `archive: false` (single file per artifact, named after the file), so
+downloads arrive in their native extension — `boot.img`, `e3q-kernel-<date>-AK3.zip`, etc. — and
+already-zipped artifacts are not re-zipped (the "double-zip" the 2026-02-26 changelog removed). A
+guard step resolves the date-stamped zip names to literal paths (asserting at most one of each)
+because `archive: false` takes exactly one file, not a wildcard set.
 
 ---
 
