@@ -462,6 +462,26 @@ patch is safe — decryption is anchored below the boot ramdisk. **The only re-e
 update that restores the stock vendor fstab or re-enables Vaultkeeper** (OTA-class, unrelated to Magisk/KSU);
 keep a `/data` backup before any such update.
 
+**KernelSU-Next v3.3.0 LKM is CONFIRMED WORKING on BeyondROM's own kernel — no custom kernel needed for
+root.** The owner patched their `init_boot` with the KSU-Next manager (bundled generic `android14-6.1_kernelsu.ko`),
+flashed via TWRP, and booted (2026-08-16). Verified from the KSU bugreport:
+- BeyondROM's running kernel `6.1.145-android14-11---ab` (built 2026-08-14, clang r487747c, +lto +pgo +bolt)
+  already has the module-load gates open — the config dump showed `KPROBES=y`, `MODULES=y`, `PREEMPT=y`, and
+  **none** of `MODULE_SIG_FORCE`/`MODULE_SIG_PROTECT`/`UH`/`RKP`/`KDP`/`SECURITY_DEFEX`/`PROCA`/`FIVE` set.
+  BeyondROM already strips the Samsung protection stack that Phase 1 removes in source.
+- The **generic** `.ko` loaded despite the `6.1.166` vs `6.1.145` version gap — `modversions` skips the version
+  token (`same_magic`), so only vermagic flags + symbol CRCs must match, and they did: `/proc/modules` shows
+  `kernelsu … Live … (OE)`; `basic.txt` shows `KernelSU: 33214`, `LKM: true`, SELinux **Enforcing**, root granted.
+- Boot session clean: 0 Java FATALs, 0 ANRs, 0 native crashes, 0 SELinux denials, no panic/watchdog bite.
+- **Known minor bug (not device- or kernel-specific):** the manager's in-app *Reboot* action crashes ksud —
+  `libksud.so` SIGSYS / `SYS_SECCOMP` on **syscall 142 (`reboot`)**, because ksud runs in the manager's
+  `untrusted_app` seccomp domain where `reboot` is disallowed on Android 16 (SDK 36). Root is unaffected; use
+  the power-menu reboot. A KSU-Next × Android-16 seccomp quirk, expected to be fixed upstream.
+
+**Implication for the project's critical path:** basic KSU root no longer requires our custom kernel — it works
+on the daily-driver BeyondROM kernel today. Our custom-kernel build (Phase 1-3) retains unique value only for
+**SUSFS** (Phase 4), which needs a kernel-side patch that cannot be applied to the already-built BeyondROM kernel.
+
 **Full stock `boot.img` trailer, and why we reproduce only the first part.** Parsing the whole stock
 partition (not just the SEANDROIDENFORCE offset) shows three appended blocks after the page-aligned kernel:
 
