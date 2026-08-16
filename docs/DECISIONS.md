@@ -577,8 +577,11 @@ kernel.
 - Must **delete `android/abi_gki_protected_exports_{aarch64,x86_64}`** or GKI ABI protection blocks
   the new exports and Wi-Fi-class modules fail (upstream step 11).
 
-**Critical-path consequence:** SUSFS needs our custom kernel, so the open audio regression
-(FACTS §0.3.2) is back on the path and must be resolved (or accepted) for a daily-usable SUSFS build.
+**Critical-path consequence:** SUSFS needs our custom kernel (Build #9), which is already
+device-verified with **all** hardware working — audio included (FACTS §0.3.2, resolved by the
+MODULE_SIG_PROTECT fix). So the SUSFS build starts from a known-good custom kernel; there is **no**
+audio blocker. (An earlier version of this entry wrongly called audio "back on the critical path" —
+it was reading a since-deleted stale open-item; corrected 2026-08-16.)
 
 **Would change our mind:** if the 3-hunk adaptation turns out to hide deeper conflicts once building,
 or if KSU-Next's SUSFS support requires a different susfs branch/version, revisit the pin.
