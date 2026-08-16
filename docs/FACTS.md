@@ -526,12 +526,12 @@ that), but the mechanism is established, not assumed.
 - ~~Effect of `CONFIG_MODULE_SIG_PROTECT=y` on loading the out-of-tree `kernelsu.ko`~~ — **RESOLVED 2026-08-14**:
   the protection was rejecting the *stock* GKI modules (Wi-Fi/BT/NFC, 61 of them) on our own-key-signed kernel,
   which would equally have blocked `kernelsu.ko`. Now disabled in `gki_defconfig` (protection #7, §0.3.1/§0.5).
-- Effect of disabling `CONFIG_UH` on early boot (uH is Samsung's micro-hypervisor, initialized before the
-  kernel) — the standard custom-kernel approach, but verify at first boot in Phase 3. **May be implicated in
-  the open audio failure** (§0.3.2) if it breaks the secure ADSP/remoteproc load.
-- **Audio playback + recording broken on our kernel (§0.3.2) — OPEN, not root-caused.** Audio HAL aborts at
-  "init audio route and audio mixer"; all audio modules load. Needs the upgraded `collect-logs.sh` capture
-  (`/proc/asound`, remoteproc state, `dumpstate_booting_delay.zip`) + a stock A/B before any fix.
+- ~~Effect of disabling `CONFIG_UH` on early boot / secure ADSP load~~ — **RESOLVED** (§0.3.2). `CONFIG_UH`
+  fully off boots fine on Build #9 and audio works; the "µH-off breaks the ADSP secure path" lead did not
+  pan out (documented in §0.3.2 as reasoning that didn't hold).
+- ~~Audio playback + recording broken on our kernel~~ — **RESOLVED** (§0.3.2, Build #9): audio playback **and**
+  recording work once `MODULE_SIG_PROTECT` is off. The Build-#7 HAL abort ("init audio route and audio mixer")
+  was a secondary cascade of the blocked-module state, not an independent audio fault — not an open issue.
 - Doc drift (Android 16 platform vs `android14-6.1` KMI): **recorded in `DECISIONS.md` 2026-08-12.**
 - Stock `init_boot` base for Phase 3: **RESOLVED** (§0.6). Unpacked the owner's real `init_boot.img` — header
   v4, lz4-legacy ramdisk (~1.44 MB). The Magisk-patched ramdisk retains an intact embedded `.backup/`
