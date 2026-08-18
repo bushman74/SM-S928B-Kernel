@@ -20,6 +20,11 @@ on:
         required: false
         default: false
         type: boolean
+      release:
+        description: "Publish the built artifacts to a GitHub Release (with SHA256SUMS for integrity)"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: build-${{ github.ref }}
@@ -30,6 +35,10 @@ jobs:
     runs-on: ubuntu-latest
     # Free runners cap at 6 hours. A cold Kleaf build on 4 vCPU can get close.
     timeout-minutes: 350
+    # Only the optional release step needs it; the default GITHUB_TOKEN is read-only unless asked.
+    # (cache/upload-artifact use the Actions runtime token, not these scopes, so this is safe.)
+    permissions:
+      contents: write
 
     steps:
       # MUST be early. Runners ship with ~14 GB usable of a ~72 GB volume; a Kleaf
@@ -234,3 +243,52 @@ jobs:
           archive: false
           retention-days: 30
           if-no-files-found: warn
+
+      # Publish a GitHub Release with the native artifacts + a SHA256SUMS file, so anyone can
+      # integrity-check a download (`sha256sum -c SHA256SUMS`). Opt-in via the `release` input —
+      # a release is a deliberate act, not something every build should spam. Uses the pre-installed
+      # `gh` CLI and needs `contents: write` (declared on the job above).
+      - name: Publish GitHub Release (artifacts + SHA256SUMS)
+        if: ${{ success() && inputs.release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # Kernel version for the title/notes (best-effort; never fails the release).
+          kver="$(sed -nE 's/^VERSION = //p; s/^PATCHLEVEL = //p; s/^SUBLEVEL = //p' \
+                  kernel_platform/common/Makefile 2>/dev/null | paste -sd. - || true)"
+          cd out/dist
+          # The same set the upload steps ship: literals stay, wildcards expand (nullglob).
+          candidates=( boot.img boot.tar.md5 e3q-kernel-*-AK3.zip e3q-modules-*.zip )
+          files=()
+          for f in "${candidates[@]}"; do [ -e "$f" ] && files+=("$f"); done
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no flashable artifacts in out/dist to release"; exit 1
+          fi
+          sha256sum "${files[@]}" | tee SHA256SUMS
+          tag="build-${{ github.run_number }}"
+          {
+            echo "Automated e3q (SM-S928B) kernel build #${{ github.run_number }} — Linux ${kver:-6.1.x}, LTO=${{ inputs.lto }}."
+            echo "Commit \`${{ github.sha }}\`."
+            echo
+            echo "**Verify integrity:** download \`SHA256SUMS\` next to the files, then run:"
+            echo '```'
+            echo "sha256sum -c SHA256SUMS"
+            echo '```'
+            echo "**Flash** per \`docs/FLASHING.md\`. Compiling is not testing — verify on-device before trusting a build."
+            echo
+            echo "SHA256:"
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+          } > release-notes.md
+          if ! gh release create "$tag" "${files[@]}" SHA256SUMS \
+                 --repo "${{ github.repository }}" \
+                 --target "${{ github.sha }}" \
+                 --title "e3q kernel — build #${{ github.run_number }}" \
+                 --notes-file release-notes.md; then
+            echo "::notice::release $tag already exists — updating its assets"
+            gh release upload "$tag" "${files[@]}" SHA256SUMS --repo "${{ github.repository }}" --clobber
+          fi
+          echo "Released as tag $tag with ${#files[@]} artifact(s) + SHA256SUMS."

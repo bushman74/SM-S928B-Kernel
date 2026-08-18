@@ -297,11 +297,14 @@ remove the mechanism cleanly and visibly in `git log`.
 **Everything builds in GitHub Actions**, never in the dev sandbox (insufficient disk). The
 workflow is **manual-trigger only** (`workflow_dispatch`) by design — CI minutes and disk are
 never spent automatically. Inputs: `toolchain` (default `reference` → clang `r487747c`), `lto`
-(`none|thin|full`), `clean`.
+(`none|thin|full`), `clean`, and `release` (publish the artifacts to a GitHub Release with a
+`SHA256SUMS` file for integrity verification).
 
 Job outline (`.github/workflows/build.yml`): free disk → checkout → **preflight** (the three
 scripts must exist and be executable) → install deps → restore ccache + **prebuilts cache** →
-`setup-toolchain.sh` → `build.sh` → `package.sh` → upload artifacts + logs.
+`setup-toolchain.sh` → `build.sh` → `package.sh` → upload artifacts + logs → *(when `release=true`)*
+publish a GitHub Release (native artifacts + `SHA256SUMS`), via the pre-installed `gh` CLI with
+`contents: write`.
 
 The three scripts:
 
