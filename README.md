@@ -97,6 +97,10 @@ zip (`upload-artifact@v7` with `archive: false`), so you download the file itsel
 | `boot.img` | Raw kernel image — for the `dd`/Heimdall path. |
 | `e3q-modules-<date>.zip` | The vendor modules built against this kernel (reference; not flashed for the first boot). |
 
+Run the workflow with the **`release`** input enabled to also publish these files to the
+repository's **[Releases](../../releases)** section, alongside a `SHA256SUMS` file — download it
+next to the artifacts and run `sha256sum -c SHA256SUMS` to verify their integrity before flashing.
+
 The single canonical build command is [`scripts/build.sh`](scripts/build.sh); repacking is
 [`scripts/package.sh`](scripts/package.sh). Never hand-run a different command — CI and local must
 not diverge.
